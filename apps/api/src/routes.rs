@@ -2,14 +2,17 @@ use std::{convert::Infallible, time::Duration};
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
-    http::{HeaderMap, HeaderName, StatusCode},
+    extract::{Path, Query, State},
+    http::{HeaderMap, HeaderName, StatusCode, header},
     response::sse::{Event, KeepAlive, Sse},
     routing::{get, post},
 };
 use lyrit_api_model::{
-    HealthResponse, JobEventResponse, JobResponse, ReadinessCheck, ReadinessResponse,
+    CreateProjectRequest, HealthResponse, JobEventResponse, JobResponse, ProjectPageResponse,
+    ProjectResponse, ReadinessCheck, ReadinessResponse, UpdateProjectRequest,
 };
+use lyrit_application::ProjectChanges;
+use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
@@ -19,10 +22,17 @@ use uuid::Uuid;
 
 use crate::{error::ApiError, state::AppState};
 
+const LOCAL_OWNER_ID: Uuid = Uuid::from_u128(1);
+
 pub fn router(state: AppState) -> Router {
     let mut api = Router::new()
         .route("/health/live", get(liveness))
         .route("/health/ready", get(readiness))
+        .route("/projects", get(list_projects).post(create_project))
+        .route(
+            "/projects/{project_id}",
+            get(get_project).patch(update_project),
+        )
         .route("/jobs/{job_id}", get(get_job))
         .route("/jobs/{job_id}/events", get(stream_job_events));
 
@@ -37,6 +47,79 @@ pub fn router(state: AppState) -> Router {
         .layer(PropagateRequestIdLayer::new(request_id.clone()))
         .layer(SetRequestIdLayer::new(request_id, MakeRequestUuid))
         .layer(TraceLayer::new_for_http())
+}
+
+async fn create_project(
+    State(state): State<AppState>,
+    Json(request): Json<CreateProjectRequest>,
+) -> Result<(StatusCode, [(HeaderName, String); 1], Json<ProjectResponse>), ApiError> {
+    let project = state
+        .projects
+        .create(
+            LOCAL_OWNER_ID,
+            request.name,
+            request.video_settings.map(Into::into),
+        )
+        .await?;
+    let location = format!("/api/v1/projects/{}", project.id);
+    Ok((
+        StatusCode::CREATED,
+        [(header::LOCATION, location)],
+        Json(project.into()),
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+struct ListProjectsQuery {
+    cursor: Option<String>,
+    #[serde(default = "default_project_limit")]
+    limit: i64,
+}
+
+const fn default_project_limit() -> i64 {
+    20
+}
+
+async fn list_projects(
+    State(state): State<AppState>,
+    Query(query): Query<ListProjectsQuery>,
+) -> Result<Json<ProjectPageResponse>, ApiError> {
+    let page = state
+        .projects
+        .list(LOCAL_OWNER_ID, query.cursor, query.limit)
+        .await?;
+    Ok(Json(ProjectPageResponse {
+        items: page.items.into_iter().map(Into::into).collect(),
+        next_cursor: page.next_cursor,
+    }))
+}
+
+async fn get_project(
+    State(state): State<AppState>,
+    Path(project_id): Path<Uuid>,
+) -> Result<Json<ProjectResponse>, ApiError> {
+    Ok(Json(
+        state.projects.get(LOCAL_OWNER_ID, project_id).await?.into(),
+    ))
+}
+
+async fn update_project(
+    State(state): State<AppState>,
+    Path(project_id): Path<Uuid>,
+    Json(request): Json<UpdateProjectRequest>,
+) -> Result<Json<ProjectResponse>, ApiError> {
+    let project = state
+        .projects
+        .update(
+            LOCAL_OWNER_ID,
+            project_id,
+            ProjectChanges {
+                name: request.name,
+                video_settings: request.video_settings.map(Into::into),
+            },
+        )
+        .await?;
+    Ok(Json(project.into()))
 }
 
 async fn liveness() -> Json<HealthResponse> {

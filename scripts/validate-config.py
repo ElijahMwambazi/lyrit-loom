@@ -25,6 +25,10 @@ IMMUTABLE_MIGRATION_SHA384 = {
         "e57ff68e88b40b22ffb20c7faf041c02800c17db150579fed807648e02712b19"
         "819869c8267d9b4b6f71f7b4c4a09d64"
     ),
+    "db/migrations/0002_projects_and_assets.sql": (
+        "c22443a364c10f04cca97d9cb6f62037ba0283111574ca35d0240f434212a613"
+        "d2758b8aeb727faab1c4daed5a125f11"
+    ),
 }
 
 

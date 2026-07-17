@@ -34,6 +34,8 @@ pnpm dev:web
 
 The Vite development server proxies `/api` to port `8080`, so local browser requests remain same-origin from application code.
 
+With authentication intentionally disabled during local development, project routes are scoped to one fixed local owner. The browser workspace uses the generated client to create, list, and rename projects. This boundary is deliberately isolated so authenticated owner extraction can replace it during private-beta hardening.
+
 ## First-time setup
 
 ```bash
@@ -80,6 +82,12 @@ The probe demonstrates the real queue mechanics:
 5. Worker commits the terminal result and releases the lease.
 
 The probe is scaffolding, not a production job type. Milestone 2 replaces it with the transcription handler while preserving the queue path.
+
+## Project API
+
+The first Milestone 1 slice implements `POST /projects`, `GET /projects`, `GET /projects/{project_id}`, and `PATCH /projects/{project_id}` from the OpenAPI contract. Project names are trimmed and limited to 120 characters; video settings enforce supported dimensions and frame rates in the application layer. PostgreSQL owns the durable records and timestamps.
+
+Asset upload remains intentionally unimplemented until the next slice, where request bodies must be streamed to an `ArtifactStore` and validated with ffprobe outside the HTTP request transaction.
 
 ## Checks
 

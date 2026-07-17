@@ -33,6 +33,8 @@ Verified on 2026-07-17 with `make check`, `docker compose up --build -d`, the AP
 
 **Goal:** create a project and attach one valid audio file and background image.
 
+Project foundation verified on 2026-07-17: project create/list/get/update is durable and owner-scoped, the generated-client React workspace supports create and rename, and the original readiness/probe path remains covered. Media ingestion and activation are the remaining work in this milestone.
+
 Build:
 
 - project create/list/get/update endpoints;

@@ -4,7 +4,7 @@ Weave words into motion.
 
 Private monorepo for turning audio, a background image, and editable word timestamps into polished lyric videos.
 
-Milestone 0 is executable: it boots a Rust API, PostgreSQL-backed durable worker, React/Vite control surface, generated TypeScript API client, and a deterministic fake transcription process boundary.
+Milestone 0 is executable, and the first Milestone 1 slice adds durable project creation, listing, lookup, and editing. The system boots a Rust API, PostgreSQL-backed durable worker, React/Vite project workspace, generated TypeScript API client, and a deterministic fake transcription process boundary.
 
 ## Run it
 
@@ -14,7 +14,7 @@ Requirements: Docker with the Compose plugin.
 docker compose up --build -d
 ```
 
-Open [http://localhost:3000](http://localhost:3000), then select **Run probe job**. The UI queues real durable work, follows persisted progress over Server-Sent Events, and shows the worker result.
+Open [http://localhost:3000](http://localhost:3000), create a project, and rename it from its project card. The Milestone 0 queue check remains available under **Foundation diagnostics**; it queues real durable work, follows persisted progress over Server-Sent Events, and shows the worker result.
 
 From another terminal, the same check is available as:
 
@@ -34,10 +34,10 @@ The PostgreSQL volume is retained. Remove it only when you intentionally want to
 
 ## What exists now
 
-- Axum API with liveness/readiness, job lookup, SSE event stream, request IDs, and a dev-only probe endpoint.
+- Axum API with project create/list/get/update, liveness/readiness, job lookup, SSE event stream, request IDs, and a dev-only probe endpoint.
 - Separate Tokio worker claiming PostgreSQL jobs with row locks, leases, heartbeats, monotonic progress, and terminal events.
-- SQLx migration for durable jobs and event history.
-- React 19 + Vite 8 landing/control surface using an OpenAPI-generated client.
+- SQLx migrations for projects/assets, durable jobs, and event history.
+- React 19 + Vite 8 project workspace using an OpenAPI-generated client.
 - Versioned fake transcriber CLI and JSON Schema contract; no Whisper model download required yet.
 - Compose images, Nginx same-origin API proxy, CI, lockfile workflows, scripts, architecture documents, and an accepted ADR.
 
@@ -90,6 +90,6 @@ See [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) for contract workflow, fake tra
 - [`docs/DELIVERY_GUIDE.md`](docs/DELIVERY_GUIDE.md) — milestones and implementation notes for Rust, React, Whisper, ASS, and FFmpeg.
 - [`contracts/openapi.yaml`](contracts/openapi.yaml) — OpenAPI 3.1 source of truth.
 
-The next vertical slice is Milestone 1: projects, streamed media uploads, local artifact storage, and ffprobe validation.
+The next Milestone 1 slice is streamed media upload, local artifact storage, and ffprobe validation for project audio and background images.
 
 This repository is proprietary and is not licensed for public distribution.

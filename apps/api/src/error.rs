@@ -24,6 +24,12 @@ impl ApiError {
 impl From<ApplicationError> for ApiError {
     fn from(error: ApplicationError) -> Self {
         match error {
+            ApplicationError::Validation(detail) => Self {
+                status: StatusCode::BAD_REQUEST,
+                code: "invalid_request",
+                title: "Invalid request",
+                detail,
+            },
             ApplicationError::NotFound => Self {
                 status: StatusCode::NOT_FOUND,
                 code: "not_found",

@@ -4,8 +4,8 @@ mod state;
 
 use std::{env, error::Error, net::SocketAddr};
 
-use lyrit_application::JobService;
-use lyrit_persistence::PgJobRepository;
+use lyrit_application::{JobService, ProjectService};
+use lyrit_persistence::{PgJobRepository, PgProjectRepository};
 use sqlx::postgres::PgPoolOptions;
 use state::AppState;
 use tokio::net::TcpListener;
@@ -28,9 +28,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     sqlx::migrate!("../../db/migrations").run(&pool).await?;
 
-    let jobs = JobService::new(PgJobRepository::new(pool));
+    let jobs = JobService::new(PgJobRepository::new(pool.clone()));
+    let projects = ProjectService::new(PgProjectRepository::new(pool));
     let state = AppState {
         jobs,
+        projects,
         enable_dev_routes,
     };
     let app = routes::router(state);

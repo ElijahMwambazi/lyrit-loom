@@ -1,12 +1,194 @@
 use std::str::FromStr;
 
 use async_trait::async_trait;
-use lyrit_application::{ApplicationError, JobRepository};
-use lyrit_domain::{Job, JobError, JobEvent, JobStatus};
+use lyrit_application::{
+    ApplicationError, JobRepository, NewProject, ProjectChanges, ProjectRepository,
+};
+use lyrit_domain::{
+    BackgroundFit, Job, JobError, JobEvent, JobStatus, Project, ProjectStatus, VideoSettings,
+};
 use serde_json::Value;
 use sqlx::{PgPool, Postgres, Transaction};
 use time::OffsetDateTime;
 use uuid::Uuid;
+
+#[derive(Debug, sqlx::FromRow)]
+struct ProjectRecord {
+    id: Uuid,
+    owner_id: Uuid,
+    name: String,
+    status: String,
+    video_width: i32,
+    video_height: i32,
+    video_fps: i32,
+    background_fit: String,
+    audio_asset_id: Option<Uuid>,
+    background_asset_id: Option<Uuid>,
+    active_transcript_revision: Option<i32>,
+    latest_render_id: Option<Uuid>,
+    created_at: OffsetDateTime,
+    updated_at: OffsetDateTime,
+}
+
+impl TryFrom<ProjectRecord> for Project {
+    type Error = ApplicationError;
+
+    fn try_from(record: ProjectRecord) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: record.id,
+            owner_id: record.owner_id,
+            name: record.name,
+            status: ProjectStatus::from_str(&record.status)
+                .map_err(ApplicationError::InvalidData)?,
+            video_settings: VideoSettings {
+                width: record.video_width,
+                height: record.video_height,
+                fps: record.video_fps,
+                background_fit: BackgroundFit::from_str(&record.background_fit)
+                    .map_err(ApplicationError::InvalidData)?,
+            },
+            audio_asset_id: record.audio_asset_id,
+            background_asset_id: record.background_asset_id,
+            active_transcript_revision: record.active_transcript_revision,
+            latest_render_id: record.latest_render_id,
+            created_at: record.created_at,
+            updated_at: record.updated_at,
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct PgProjectRepository {
+    pool: PgPool,
+}
+
+impl PgProjectRepository {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl ProjectRepository for PgProjectRepository {
+    async fn create(&self, project: NewProject) -> Result<Project, ApplicationError> {
+        sqlx::query_as::<_, ProjectRecord>(
+            r#"
+            INSERT INTO projects (
+                id, owner_id, name, video_width, video_height, video_fps, background_fit
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING id, owner_id, name, status, video_width, video_height, video_fps,
+                      background_fit, audio_asset_id, background_asset_id,
+                      active_transcript_revision, latest_render_id, created_at, updated_at
+            "#,
+        )
+        .bind(project.id)
+        .bind(project.owner_id)
+        .bind(project.name)
+        .bind(project.video_settings.width)
+        .bind(project.video_settings.height)
+        .bind(project.video_settings.fps)
+        .bind(project.video_settings.background_fit.as_str())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(repository_error)
+        .and_then(Project::try_from)
+    }
+
+    async fn get(&self, owner_id: Uuid, id: Uuid) -> Result<Option<Project>, ApplicationError> {
+        sqlx::query_as::<_, ProjectRecord>(
+            r#"
+            SELECT id, owner_id, name, status, video_width, video_height, video_fps,
+                   background_fit, audio_asset_id, background_asset_id,
+                   active_transcript_revision, latest_render_id, created_at, updated_at
+            FROM projects
+            WHERE owner_id = $1 AND id = $2
+            "#,
+        )
+        .bind(owner_id)
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(repository_error)?
+        .map(Project::try_from)
+        .transpose()
+    }
+
+    async fn list(
+        &self,
+        owner_id: Uuid,
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<Project>, ApplicationError> {
+        sqlx::query_as::<_, ProjectRecord>(
+            r#"
+            SELECT id, owner_id, name, status, video_width, video_height, video_fps,
+                   background_fit, audio_asset_id, background_asset_id,
+                   active_transcript_revision, latest_render_id, created_at, updated_at
+            FROM projects
+            WHERE owner_id = $1
+            ORDER BY updated_at DESC, id DESC
+            OFFSET $2
+            LIMIT $3
+            "#,
+        )
+        .bind(owner_id)
+        .bind(offset)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(repository_error)?
+        .into_iter()
+        .map(Project::try_from)
+        .collect()
+    }
+
+    async fn update(
+        &self,
+        owner_id: Uuid,
+        id: Uuid,
+        changes: ProjectChanges,
+    ) -> Result<Option<Project>, ApplicationError> {
+        let (width, height, fps, background_fit) = changes
+            .video_settings
+            .map(|settings| {
+                (
+                    Some(settings.width),
+                    Some(settings.height),
+                    Some(settings.fps),
+                    Some(settings.background_fit.as_str()),
+                )
+            })
+            .unwrap_or((None, None, None, None));
+        sqlx::query_as::<_, ProjectRecord>(
+            r#"
+            UPDATE projects
+            SET name = COALESCE($3, name),
+                video_width = COALESCE($4, video_width),
+                video_height = COALESCE($5, video_height),
+                video_fps = COALESCE($6, video_fps),
+                background_fit = COALESCE($7, background_fit),
+                updated_at = now()
+            WHERE owner_id = $1 AND id = $2
+            RETURNING id, owner_id, name, status, video_width, video_height, video_fps,
+                      background_fit, audio_asset_id, background_asset_id,
+                      active_transcript_revision, latest_render_id, created_at, updated_at
+            "#,
+        )
+        .bind(owner_id)
+        .bind(id)
+        .bind(changes.name)
+        .bind(width)
+        .bind(height)
+        .bind(fps)
+        .bind(background_fit)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(repository_error)?
+        .map(Project::try_from)
+        .transpose()
+    }
+}
 
 #[derive(Debug, sqlx::FromRow)]
 struct JobRecord {
