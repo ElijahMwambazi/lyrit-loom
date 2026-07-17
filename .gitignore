@@ -1,0 +1,26 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# JavaScript
+/node_modules/
+**/node_modules/
+**/dist/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# Environment and local data
+.env
+/.data/
+/artifacts/
+/workspaces/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store

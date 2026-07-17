@@ -1,0 +1,69 @@
+name: lyrit-loom
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: lyrit
+      POSTGRES_USER: lyrit
+      POSTGRES_PASSWORD: lyrit
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lyrit -d lyrit"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: infra/containers/api.Dockerfile
+    environment:
+      DATABASE_URL: postgres://lyrit:lyrit@postgres:5432/lyrit
+      API_BIND: 0.0.0.0:8080
+      ENABLE_DEV_ROUTES: "true"
+      LOG_FORMAT: json
+      RUST_LOG: lyrit_api=info,tower_http=info
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v1/health/ready"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  worker:
+    build:
+      context: .
+      dockerfile: infra/containers/worker.Dockerfile
+    environment:
+      DATABASE_URL: postgres://lyrit:lyrit@postgres:5432/lyrit
+      WORKER_ID: compose-worker
+      WORKER_POLL_MS: "500"
+      WORKER_LEASE_SECONDS: "30"
+      LOG_FORMAT: json
+      RUST_LOG: lyrit_worker=info
+      LYRIT_TRANSCRIBER_MODE: fake
+      PYTHONPATH: /app/apps/transcriber/src
+    depends_on:
+      api:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: infra/containers/web.Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres-data:

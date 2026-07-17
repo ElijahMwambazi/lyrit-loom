@@ -1,0 +1,1296 @@
+openapi: 3.1.1
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: Lyrit Loom API
+  version: 1.0.0
+  summary: Projects, timed lyrics, transcription jobs, and lyric-video renders
+  description: |
+    Contract-first API for the private Lyrit Loom application.
+    Long-running transcription and render operations return durable job resources.
+    JSON field names use snake_case; media timeline values use integer milliseconds.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: /api/v1
+    description: Same-origin deployment or development proxy
+tags:
+  - name: Health
+    description: Process and dependency health
+  - name: Projects
+    description: Project metadata and defaults
+  - name: Assets
+    description: Source media ingestion and generated artifacts
+  - name: Transcripts
+    description: Word-timed transcription and immutable editor revisions
+  - name: Renders
+    description: Render requests and outputs
+  - name: Jobs
+    description: Durable long-running operation status, progress, and cancellation
+  - name: Artifacts
+    description: Authorized artifact retrieval
+security:
+  - bearerAuth: []
+
+paths:
+  /health/live:
+    get:
+      tags: [Health]
+      operationId: getLiveness
+      summary: Process liveness
+      security: []
+      responses:
+        "200":
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /health/ready:
+    get:
+      tags: [Health]
+      operationId: getReadiness
+      summary: Dependency and capability readiness
+      security: []
+      responses:
+        "200":
+          description: Ready to serve applicable work
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /projects:
+    post:
+      tags: [Projects]
+      operationId: createProject
+      summary: Create a lyric-video project
+      parameters:
+        - $ref: "#/components/parameters/OptionalIdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProjectRequest"
+      responses:
+        "201":
+          description: Project created
+          headers:
+            Location:
+              description: Canonical project URL
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    get:
+      tags: [Projects]
+      operationId: listProjects
+      summary: List projects for the current owner
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: Project page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /projects/{project_id}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [Projects]
+      operationId: getProject
+      summary: Get a project
+      responses:
+        "200":
+          description: Project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Projects]
+      operationId: updateProject
+      summary: Update project metadata or default video settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProjectRequest"
+      responses:
+        "200":
+          description: Updated project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /projects/{project_id}/assets:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Assets]
+      operationId: uploadProjectAsset
+      summary: Upload or replace the project's source audio or background image
+      description: |
+        The API streams the multipart body, computes a checksum, performs initial
+        validation, and makes the new asset active only after the write succeeds.
+      parameters:
+        - $ref: "#/components/parameters/OptionalIdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [kind, file]
+              properties:
+                kind:
+                  $ref: "#/components/schemas/SourceAssetKind"
+                file:
+                  type: string
+                  format: binary
+            encoding:
+              file:
+                contentType: audio/*, image/*
+      responses:
+        "201":
+          description: Asset stored and activated
+          headers:
+            Location:
+              description: Canonical asset metadata URL
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMedia"
+
+  /projects/{project_id}/transcriptions:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Transcripts]
+      operationId: startTranscription
+      summary: Start word-level transcription of the active audio asset
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartTranscriptionRequest"
+      responses:
+        "202":
+          description: Transcription job accepted
+          headers:
+            Location:
+              description: Canonical job URL
+              schema:
+                type: string
+            Retry-After:
+              description: Suggested polling interval in seconds
+              schema:
+                type: integer
+                default: 2
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /projects/{project_id}/transcript:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [Transcripts]
+      operationId: getActiveTranscript
+      summary: Get the active immutable transcript revision
+      responses:
+        "200":
+          description: Active transcript revision
+          headers:
+            ETag:
+              description: Revision validator required for an update
+              schema:
+                type: string
+                example: '"transcript-revision-7"'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TranscriptRevision"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Transcripts]
+      operationId: replaceActiveTranscript
+      summary: Save edits as a new immutable transcript revision
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplaceTranscriptRequest"
+      responses:
+        "200":
+          description: New active transcript revision
+          headers:
+            ETag:
+              description: Validator for this new revision
+              schema:
+                type: string
+                example: '"transcript-revision-8"'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TranscriptRevision"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "412":
+          description: The supplied ETag does not identify the active revision
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://lyric-video.local/problems/revision-conflict
+                title: Transcript revision conflict
+                status: 412
+                code: revision_conflict
+                detail: The transcript changed after this editor loaded it.
+                request_id: 8286d1f6-05ab-4f84-a8bb-e47f33f9bb7d
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          description: If-Match header is required
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /projects/{project_id}/renders:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Renders]
+      operationId: startRender
+      summary: Start a video render from a pinned transcript revision
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartRenderRequest"
+      responses:
+        "202":
+          description: Render accepted
+          headers:
+            Location:
+              description: Canonical render URL
+              schema:
+                type: string
+            Retry-After:
+              description: Suggested polling interval in seconds
+              schema:
+                type: integer
+                default: 2
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RenderAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /renders/{render_id}:
+    get:
+      tags: [Renders]
+      operationId: getRender
+      summary: Get render metadata and result
+      parameters:
+        - $ref: "#/components/parameters/RenderId"
+      responses:
+        "200":
+          description: Render resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Render"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /jobs/{job_id}:
+    get:
+      tags: [Jobs]
+      operationId: getJob
+      summary: Get current durable job state
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Job resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /jobs/{job_id}/events:
+    get:
+      tags: [Jobs]
+      operationId: streamJobEvents
+      summary: Stream job snapshots and progress with Server-Sent Events
+      description: |
+        Event names are `progress`, `succeeded`, `failed`, and `cancelled`.
+        Each `data` field is a JSON JobEvent. Clients should reconnect with
+        `Last-Event-ID` and fall back to GET /jobs/{job_id} when streaming is unavailable.
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: SSE stream
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-cache
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/JobEvent"
+              example:
+                job_id: e1c34fb8-fc84-46a8-b353-361276f59751
+                sequence: 17
+                status: running
+                phase: encoding
+                progress: 0.64
+                message: Rendering video
+                occurred_at: 2026-07-16T18:20:12Z
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /jobs/{job_id}/cancel:
+    post:
+      tags: [Jobs]
+      operationId: cancelJob
+      summary: Request cancellation of a queued or running job
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: Cancellation accepted or already requested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /artifacts/{artifact_id}/content:
+    get:
+      tags: [Artifacts]
+      operationId: downloadArtifact
+      summary: Download an authorized project artifact
+      parameters:
+        - $ref: "#/components/parameters/ArtifactId"
+      responses:
+        "200":
+          description: Artifact bytes
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              example: attachment; filename="lyric-video.mp4"
+            ETag:
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+            text/x-ssa:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    RenderId:
+      name: render_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    ArtifactId:
+      name: artifact_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Opaque client-generated key scoped to owner and operation
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+        pattern: "^[A-Za-z0-9._:-]+$"
+    OptionalIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Opaque client-generated key scoped to owner and operation
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+        pattern: "^[A-Za-z0-9._:-]+$"
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: ETag returned with the active transcript revision
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Invalid request syntax or fields
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Unauthorized:
+      description: Missing or invalid authentication
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    NotFound:
+      description: Resource is absent or not visible to the current owner
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Conflict:
+      description: Request conflicts with current resource state or idempotency record
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    PayloadTooLarge:
+      description: Upload exceeds configured byte or duration limits
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    UnsupportedMedia:
+      description: File media type, container, codec, or decoded content is unsupported
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    UnprocessableEntity:
+      description: Request is syntactically valid but violates domain or media invariants
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    ServiceUnavailable:
+      description: Required dependency or capability is unavailable
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+
+  schemas:
+    Uuid:
+      type: string
+      format: uuid
+
+    Timestamp:
+      type: string
+      format: date-time
+
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+
+    ReadinessResponse:
+      type: object
+      additionalProperties: false
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        checks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReadinessCheck"
+
+    ReadinessCheck:
+      type: object
+      additionalProperties: false
+      required: [name, ready]
+      properties:
+        name:
+          type: string
+          examples: [database]
+        ready:
+          type: boolean
+        detail:
+          type: [string, "null"]
+
+    CreateProjectRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        video_settings:
+          $ref: "#/components/schemas/VideoSettings"
+
+    UpdateProjectRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        video_settings:
+          $ref: "#/components/schemas/VideoSettings"
+
+    ProjectStatus:
+      type: string
+      enum: [draft, ready, rendering, completed, failed]
+
+    Project:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - status
+        - video_settings
+        - created_at
+        - updated_at
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        name:
+          type: string
+        status:
+          $ref: "#/components/schemas/ProjectStatus"
+        video_settings:
+          $ref: "#/components/schemas/VideoSettings"
+        audio_asset:
+          oneOf:
+            - $ref: "#/components/schemas/Asset"
+            - type: "null"
+        background_asset:
+          oneOf:
+            - $ref: "#/components/schemas/Asset"
+            - type: "null"
+        active_transcript_revision:
+          type: [integer, "null"]
+          minimum: 1
+        latest_render_id:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    ProjectPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Project"
+        next_cursor:
+          type: [string, "null"]
+
+    VideoSettings:
+      type: object
+      additionalProperties: false
+      required: [width, height, fps, background_fit]
+      properties:
+        width:
+          type: integer
+          minimum: 320
+          maximum: 3840
+          default: 1920
+        height:
+          type: integer
+          minimum: 320
+          maximum: 3840
+          default: 1080
+        fps:
+          type: integer
+          enum: [24, 25, 30, 50, 60]
+          default: 30
+        background_fit:
+          type: string
+          enum: [cover, contain, stretch]
+          default: cover
+
+    SourceAssetKind:
+      type: string
+      enum: [audio, background]
+
+    AssetKind:
+      type: string
+      enum: [audio, background, normalized_audio, subtitle, video]
+
+    Asset:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - project_id
+        - kind
+        - media_type
+        - bytes
+        - sha256
+        - created_at
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        project_id:
+          $ref: "#/components/schemas/Uuid"
+        kind:
+          $ref: "#/components/schemas/AssetKind"
+        original_filename:
+          type: [string, "null"]
+        media_type:
+          type: string
+        bytes:
+          type: integer
+          minimum: 0
+        sha256:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        duration_ms:
+          type: [integer, "null"]
+          minimum: 0
+        width:
+          type: [integer, "null"]
+          minimum: 1
+        height:
+          type: [integer, "null"]
+          minimum: 1
+        content_url:
+          type: string
+          format: uri-reference
+          readOnly: true
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    StartTranscriptionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        language:
+          type: string
+          default: auto
+          description: BCP 47 language hint or `auto`
+        model:
+          type: string
+          default: configured-default
+          description: Server allow-listed model profile, not an arbitrary model path
+        initial_prompt:
+          type: [string, "null"]
+          maxLength: 1000
+        vad_enabled:
+          type: boolean
+          default: true
+
+    TranscriptSource:
+      type: string
+      enum: [whisper, edited, imported]
+
+    TranscriptRevision:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - project_id
+        - revision
+        - source
+        - language
+        - duration_ms
+        - cues
+        - created_at
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        project_id:
+          $ref: "#/components/schemas/Uuid"
+        revision:
+          type: integer
+          minimum: 1
+        source:
+          $ref: "#/components/schemas/TranscriptSource"
+        language:
+          type: string
+        duration_ms:
+          type: integer
+          minimum: 1
+        cues:
+          type: array
+          items:
+            $ref: "#/components/schemas/TranscriptCue"
+        transcriber:
+          oneOf:
+            - $ref: "#/components/schemas/TranscriberMetadata"
+            - type: "null"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    ReplaceTranscriptRequest:
+      type: object
+      additionalProperties: false
+      required: [language, duration_ms, cues]
+      properties:
+        language:
+          type: string
+        duration_ms:
+          type: integer
+          minimum: 1
+        cues:
+          type: array
+          items:
+            $ref: "#/components/schemas/TranscriptCue"
+
+    TranscriptCue:
+      type: object
+      additionalProperties: false
+      required: [id, start_ms, end_ms, words]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        start_ms:
+          type: integer
+          minimum: 0
+        end_ms:
+          type: integer
+          minimum: 1
+        words:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/TimedWord"
+
+    TimedWord:
+      type: object
+      additionalProperties: false
+      required: [id, text, start_ms, end_ms]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        text:
+          type: string
+          minLength: 1
+          maxLength: 200
+        start_ms:
+          type: integer
+          minimum: 0
+        end_ms:
+          type: integer
+          minimum: 1
+        confidence:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+          readOnly: true
+
+    TranscriberMetadata:
+      type: object
+      additionalProperties: false
+      required: [engine, model, model_revision, language_probability]
+      properties:
+        engine:
+          type: string
+          const: faster-whisper
+        model:
+          type: string
+        model_revision:
+          type: string
+        language_probability:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    StartRenderRequest:
+      type: object
+      additionalProperties: false
+      required: [transcript_revision, preset, quality, typography, animation]
+      properties:
+        transcript_revision:
+          type: integer
+          minimum: 1
+        preset:
+          $ref: "#/components/schemas/RenderPreset"
+        quality:
+          $ref: "#/components/schemas/RenderQuality"
+        video_settings:
+          oneOf:
+            - $ref: "#/components/schemas/VideoSettings"
+            - type: "null"
+          description: Optional per-render override; null uses project defaults
+        typography:
+          $ref: "#/components/schemas/TypographySettings"
+        animation:
+          $ref: "#/components/schemas/AnimationSettings"
+        include_debug_ass:
+          type: boolean
+          default: false
+
+    RenderPreset:
+      type: string
+      enum: [clean_karaoke, focus_word, kinetic_pop]
+
+    RenderQuality:
+      type: string
+      enum: [draft, final]
+
+    TypographySettings:
+      type: object
+      additionalProperties: false
+      required:
+        - font_family
+        - font_size
+        - primary_color
+        - highlight_color
+        - outline_color
+        - alignment
+        - margin_v
+      properties:
+        font_family:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Server allow-listed bundled font family
+        font_size:
+          type: integer
+          minimum: 12
+          maximum: 240
+        primary_color:
+          $ref: "#/components/schemas/HexColor"
+        highlight_color:
+          $ref: "#/components/schemas/HexColor"
+        outline_color:
+          $ref: "#/components/schemas/HexColor"
+        outline_width:
+          type: number
+          minimum: 0
+          maximum: 12
+          default: 2
+        alignment:
+          type: string
+          enum: [top, center, bottom]
+        margin_v:
+          type: integer
+          minimum: 0
+          maximum: 1000
+
+    AnimationSettings:
+      type: object
+      additionalProperties: false
+      required: [intensity, fade_in_ms, fade_out_ms]
+      properties:
+        intensity:
+          type: number
+          minimum: 0
+          maximum: 1
+        fade_in_ms:
+          type: integer
+          minimum: 0
+          maximum: 3000
+        fade_out_ms:
+          type: integer
+          minimum: 0
+          maximum: 3000
+
+    HexColor:
+      type: string
+      pattern: "^#[A-Fa-f0-9]{6}$"
+
+    RenderAccepted:
+      type: object
+      additionalProperties: false
+      required: [render_id, job, render_url]
+      properties:
+        render_id:
+          $ref: "#/components/schemas/Uuid"
+        job:
+          $ref: "#/components/schemas/Job"
+        render_url:
+          type: string
+          format: uri-reference
+
+    RenderStatus:
+      type: string
+      enum: [queued, running, succeeded, failed, cancelled]
+
+    Render:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - project_id
+        - job_id
+        - transcript_revision
+        - status
+        - settings
+        - created_at
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        project_id:
+          $ref: "#/components/schemas/Uuid"
+        job_id:
+          $ref: "#/components/schemas/Uuid"
+        transcript_revision:
+          type: integer
+          minimum: 1
+        status:
+          $ref: "#/components/schemas/RenderStatus"
+        settings:
+          $ref: "#/components/schemas/StartRenderRequest"
+        output:
+          oneOf:
+            - $ref: "#/components/schemas/RenderOutput"
+            - type: "null"
+        error:
+          oneOf:
+            - $ref: "#/components/schemas/JobError"
+            - type: "null"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        completed_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+
+    RenderOutput:
+      type: object
+      additionalProperties: false
+      required: [video_asset, duration_ms, width, height]
+      properties:
+        video_asset:
+          $ref: "#/components/schemas/Asset"
+        subtitle_asset:
+          oneOf:
+            - $ref: "#/components/schemas/Asset"
+            - type: "null"
+        duration_ms:
+          type: integer
+          minimum: 1
+        width:
+          type: integer
+          minimum: 1
+        height:
+          type: integer
+          minimum: 1
+
+    JobAccepted:
+      type: object
+      additionalProperties: false
+      required: [job, job_url, events_url]
+      properties:
+        job:
+          $ref: "#/components/schemas/Job"
+        job_url:
+          type: string
+          format: uri-reference
+        events_url:
+          type: string
+          format: uri-reference
+
+    JobType:
+      type: string
+      enum: [transcribe, render]
+
+    JobStatus:
+      type: string
+      enum: [queued, running, cancelling, succeeded, failed, cancelled]
+
+    Job:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - type
+        - status
+        - phase
+        - progress
+        - attempt
+        - max_attempts
+        - cancellable
+        - created_at
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        type:
+          $ref: "#/components/schemas/JobType"
+        status:
+          $ref: "#/components/schemas/JobStatus"
+        phase:
+          type: string
+          enum:
+            - queued
+            - validating
+            - normalizing
+            - transcribing
+            - post_processing
+            - subtitle_compiling
+            - encoding
+            - finalizing
+            - complete
+            - failed
+            - cancelled
+        progress:
+          type: number
+          minimum: 0
+          maximum: 1
+        attempt:
+          type: integer
+          minimum: 0
+        max_attempts:
+          type: integer
+          minimum: 1
+        cancellable:
+          type: boolean
+        result:
+          type: [object, "null"]
+          additionalProperties: true
+        error:
+          oneOf:
+            - $ref: "#/components/schemas/JobError"
+            - type: "null"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        started_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        finished_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+
+    JobError:
+      type: object
+      additionalProperties: false
+      required: [code, message, retryable]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        retryable:
+          type: boolean
+        diagnostic_id:
+          type: [string, "null"]
+
+    JobEvent:
+      type: object
+      additionalProperties: false
+      required: [job_id, sequence, status, phase, progress, occurred_at]
+      properties:
+        job_id:
+          $ref: "#/components/schemas/Uuid"
+        sequence:
+          type: integer
+          minimum: 0
+        status:
+          $ref: "#/components/schemas/JobStatus"
+        phase:
+          type: string
+        progress:
+          type: number
+          minimum: 0
+          maximum: 1
+        message:
+          type: [string, "null"]
+        occurred_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    ValidationIssue:
+      type: object
+      additionalProperties: false
+      required: [path, message]
+      properties:
+        path:
+          type: string
+          examples: ["cues[2].words[4].end_ms"]
+        message:
+          type: string
+
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, code, detail, request_id]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        code:
+          type: string
+          pattern: "^[a-z][a-z0-9_]*$"
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+        request_id:
+          $ref: "#/components/schemas/Uuid"
+        issues:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidationIssue"

@@ -1,0 +1,17 @@
+[package]
+name = "lyrit-worker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+lyrit-application = { path = "../../crates/application" }
+lyrit-domain = { path = "../../crates/domain" }
+lyrit-persistence = { path = "../../crates/persistence" }
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true

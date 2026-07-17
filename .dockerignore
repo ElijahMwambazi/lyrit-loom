@@ -1,0 +1,10 @@
+.git
+.github
+.data
+.env
+node_modules
+**/node_modules
+target
+**/target
+**/__pycache__
+*.zip

@@ -1,0 +1,15 @@
+[package]
+name = "lyrit-persistence"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+lyrit-application = { path = "../application" }
+lyrit-domain = { path = "../domain" }
+serde_json.workspace = true
+sqlx.workspace = true
+time.workspace = true
+uuid.workspace = true
