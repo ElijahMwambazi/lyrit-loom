@@ -88,11 +88,13 @@ export function App() {
   return (
     <main className="app-shell">
       <header className="brand-header" aria-label="Lyrit Loom">
-        <img
-          src="/brand/lyrit-loom-logo-mono.png"
-          alt=""
-          className="brand-header-logo"
-        />
+        <span className="brand-header-logo-frame" aria-hidden="true">
+          <img
+            src="/brand/lyrit-loom-logo.png"
+            alt=""
+            className="brand-header-logo"
+          />
+        </span>
         <span>Lyrit Loom</span>
       </header>
       <section className="hero" aria-labelledby="page-title">
@@ -107,7 +109,7 @@ export function App() {
         </div>
         <div className="hero-logo-frame">
           <img
-            src="/brand/lyrit-loom-logo.png"
+            src="/brand/lyrit-loom-logo-mono.png"
             alt="Lyrit Loom woven waveform mark"
             className="hero-logo"
           />

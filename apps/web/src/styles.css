@@ -46,10 +46,22 @@ button {
   text-transform: uppercase;
 }
 
+.brand-header-logo-frame {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  overflow: hidden;
+  border-radius: 11px;
+  box-shadow: 0 7px 18px rgba(34, 31, 24, 0.16);
+}
+
 .brand-header-logo {
-  width: 34px;
-  height: 34px;
-  object-fit: contain;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 190%;
+  max-width: none;
+  transform: translate(-50%, -50%);
 }
 
 .hero {
@@ -72,14 +84,30 @@ button {
   overflow: visible;
 }
 
+.hero-logo-frame::before {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 128%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 34%, rgba(232, 184, 67, 0.42), transparent 54%),
+    radial-gradient(circle at 68% 64%, rgba(159, 128, 220, 0.3), transparent 58%);
+  content: "";
+  filter: blur(14px);
+  transform: translate(-50%, -50%);
+}
+
 .hero-logo {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 168%;
+  z-index: 1;
+  width: 220%;
   max-width: none;
   transform: translate(-50%, -50%);
-  filter: drop-shadow(0 24px 34px rgba(55, 43, 23, 0.2));
+  filter: drop-shadow(0 20px 28px rgba(55, 43, 23, 0.18));
 }
 
 .eyebrow,

@@ -37,7 +37,11 @@ describe("App", () => {
     expect(screen.getByText("Weave words into motion.")).toBeInTheDocument();
     expect(
       screen.getByAltText("Lyrit Loom woven waveform mark"),
-    ).toHaveAttribute("src", "/brand/lyrit-loom-logo.png");
+    ).toHaveAttribute("src", "/brand/lyrit-loom-logo-mono.png");
+    expect(document.querySelector(".brand-header-logo")).toHaveAttribute(
+      "src",
+      "/brand/lyrit-loom-logo.png",
+    );
     expect(
       await screen.findByText("Ready for the first project workflow."),
     ).toBeInTheDocument();
