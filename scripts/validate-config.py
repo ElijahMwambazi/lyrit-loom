@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tomllib
@@ -19,6 +20,12 @@ EXCLUDED_PARTS = {
     "node_modules",
     "target",
 }
+IMMUTABLE_MIGRATION_SHA384 = {
+    "db/migrations/0001_jobs.sql": (
+        "e57ff68e88b40b22ffb20c7faf041c02800c17db150579fed807648e02712b19"
+        "819869c8267d9b4b6f71f7b4c4a09d64"
+    ),
+}
 
 
 def repository_files(*suffixes: str) -> list[Path]:
@@ -37,6 +44,14 @@ def repository_files(*suffixes: str) -> list[Path]:
 
 
 def main() -> None:
+    for relative_path, expected_checksum in IMMUTABLE_MIGRATION_SHA384.items():
+        migration_path = REPOSITORY_ROOT / relative_path
+        actual_checksum = hashlib.sha384(migration_path.read_bytes()).hexdigest()
+        if actual_checksum != expected_checksum:
+            raise ValueError(
+                f"immutable migration changed: {relative_path}; add a new migration instead"
+            )
+
     for path in repository_files(".json"):
         with path.open(encoding="utf-8") as handle:
             json.load(handle)
@@ -53,7 +68,7 @@ def main() -> None:
         with path.open("rb") as handle:
             tomllib.load(handle)
 
-    print("JSON, JSON Schema, YAML, and TOML validation passed")
+    print("Migration, JSON, JSON Schema, YAML, and TOML validation passed")
 
 
 if __name__ == "__main__":

@@ -41,3 +41,4 @@ CREATE TABLE job_events (
 );
 
 CREATE INDEX job_events_stream_idx ON job_events (job_id, id);
+
