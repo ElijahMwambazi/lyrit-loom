@@ -1,6 +1,6 @@
 :root {
-  color: #f4f1e8;
-  background: #101114;
+  color: #17191d;
+  background: #f7f5ef;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
@@ -17,8 +17,11 @@ body {
   min-width: 320px;
   min-height: 100vh;
   background:
-    radial-gradient(circle at 80% 5%, rgba(223, 181, 86, 0.12), transparent 34rem),
-    #101114;
+    radial-gradient(ellipse 65% 45% at 5% 0%, rgba(238, 190, 70, 0.24), transparent 70%),
+    radial-gradient(ellipse 58% 42% at 96% 4%, rgba(157, 126, 218, 0.2), transparent 72%),
+    radial-gradient(ellipse 48% 34% at 86% 100%, rgba(91, 181, 178, 0.13), transparent 72%),
+    #f7f5ef;
+  background-attachment: fixed;
 }
 
 button {
@@ -36,7 +39,7 @@ button {
   align-items: center;
   gap: 10px;
   margin-bottom: 54px;
-  color: #e9e5dc;
+  color: #25272c;
   font-size: 0.9rem;
   font-weight: 750;
   letter-spacing: 0.08em;
@@ -66,27 +69,22 @@ button {
   width: min(190px, 100%);
   aspect-ratio: 1;
   justify-self: end;
-  overflow: hidden;
-  border: 1px solid rgba(231, 196, 116, 0.58);
-  border-radius: 30px;
-  background: linear-gradient(145deg, #fffaf0, #e8deca);
-  box-shadow:
-    0 24px 60px rgba(0, 0, 0, 0.32),
-    0 8px 30px rgba(215, 173, 80, 0.16);
+  overflow: visible;
 }
 
 .hero-logo {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 158%;
+  width: 168%;
   max-width: none;
   transform: translate(-50%, -50%);
+  filter: drop-shadow(0 24px 34px rgba(55, 43, 23, 0.2));
 }
 
 .eyebrow,
 .step-label {
-  color: #d7ad50;
+  color: #9a6b0d;
   font-size: 0.72rem;
   font-weight: 800;
   letter-spacing: 0.2em;
@@ -103,14 +101,14 @@ h1 {
 
 .lede {
   max-width: 700px;
-  color: #aaa9a5;
+  color: #686a70;
   font-size: clamp(1.05rem, 2vw, 1.28rem);
   line-height: 1.65;
 }
 
 .tagline {
   margin: 0 0 8px;
-  color: #e6c77f;
+  color: #9a6b0d;
   font-size: clamp(1.2rem, 2.5vw, 1.65rem);
   font-weight: 650;
 }
@@ -119,10 +117,13 @@ h1 {
 .probe-card {
   grid-column: 1 / -1;
   margin-top: 30px;
-  border: 1px solid #303136;
+  border: 1px solid rgba(35, 37, 42, 0.1);
   border-radius: 20px;
-  background: rgba(25, 26, 30, 0.82);
-  backdrop-filter: blur(12px);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow:
+    0 18px 50px rgba(54, 46, 31, 0.08),
+    0 2px 8px rgba(54, 46, 31, 0.04);
+  backdrop-filter: blur(18px);
 }
 
 .system-card {
@@ -139,7 +140,7 @@ h1 {
 
 .system-card p {
   margin: 7px 0 0 24px;
-  color: #969590;
+  color: #73757a;
 }
 
 .status-dot {
@@ -147,16 +148,16 @@ h1 {
   width: 12px;
   height: 12px;
   border-radius: 999px;
-  background: #777;
+  background: #8a8c91;
 }
 
 .status-ready {
-  background: #74c69d;
-  box-shadow: 0 0 0 5px rgba(116, 198, 157, 0.12);
+  background: #43a77a;
+  box-shadow: 0 0 0 5px rgba(67, 167, 122, 0.13);
 }
 
 .status-unavailable {
-  background: #ef8354;
+  background: #d96745;
 }
 
 .probe-card {
@@ -184,16 +185,16 @@ h1 {
 }
 
 .button-primary {
-  border: 1px solid #d7ad50;
-  color: #101114;
-  background: #d7ad50;
+  border: 1px solid #d2a640;
+  color: #17191d;
+  background: #e5bd5b;
   font-weight: 750;
 }
 
 .button-secondary {
-  border: 1px solid #45464c;
-  color: #f4f1e8;
-  background: transparent;
+  border: 1px solid #c9c5bb;
+  color: #25272c;
+  background: rgba(255, 255, 255, 0.64);
 }
 
 .button-primary:hover:not(:disabled),
@@ -211,13 +212,13 @@ h1 {
   margin-top: 30px;
   overflow: hidden;
   border-radius: 999px;
-  background: #303136;
+  background: #e5e0d6;
 }
 
 .progress-fill {
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, #d7ad50, #f0d89c);
+  background: linear-gradient(90deg, #c7952b, #eacb78);
   transition: width 300ms ease;
 }
 
@@ -225,17 +226,17 @@ h1 {
   display: flex;
   justify-content: space-between;
   margin-top: 10px;
-  color: #8f8e89;
+  color: #777980;
   font-size: 0.82rem;
   text-transform: capitalize;
 }
 
 .success-message {
-  color: #8bd3b0;
+  color: #267c59;
 }
 
 .error-message {
-  color: #ff9f7a;
+  color: #b84e35;
 }
 
 .pipeline {
@@ -244,19 +245,20 @@ h1 {
   gap: 1px;
   margin-top: 72px;
   overflow: hidden;
-  border: 1px solid #2d2e33;
+  border: 1px solid rgba(35, 37, 42, 0.1);
   border-radius: 18px;
-  background: #2d2e33;
+  background: rgba(35, 37, 42, 0.1);
+  box-shadow: 0 18px 50px rgba(54, 46, 31, 0.07);
 }
 
 .pipeline article {
   min-height: 170px;
   padding: 22px;
-  background: #16171b;
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .pipeline article > span {
-  color: #d7ad50;
+  color: #9a6b0d;
   font-size: 0.8rem;
   font-weight: 800;
 }
@@ -268,7 +270,7 @@ h1 {
 
 .pipeline p {
   margin: 0;
-  color: #888782;
+  color: #73757a;
   line-height: 1.45;
 }
 
