@@ -105,11 +105,13 @@ export function App() {
             FFmpeg render pipeline.
           </p>
         </div>
-        <img
-          src="/brand/lyrit-loom-logo.png"
-          alt="Lyrit Loom woven waveform mark"
-          className="hero-logo"
-        />
+        <div className="hero-logo-frame">
+          <img
+            src="/brand/lyrit-loom-logo.png"
+            alt="Lyrit Loom woven waveform mark"
+            className="hero-logo"
+          />
+        </div>
 
         <div className="system-card">
           <div>

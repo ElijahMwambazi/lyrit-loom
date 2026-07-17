@@ -61,9 +61,24 @@ button {
   min-width: 0;
 }
 
+.hero-logo-frame {
+  display: grid;
+  width: min(190px, 100%);
+  aspect-ratio: 1;
+  justify-self: end;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(231, 196, 116, 0.58);
+  border-radius: 30px;
+  background: linear-gradient(145deg, #fffaf0, #e8deca);
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.32),
+    0 8px 30px rgba(215, 173, 80, 0.16);
+}
+
 .hero-logo {
-  width: 100%;
-  filter: drop-shadow(0 24px 50px rgba(215, 173, 80, 0.12));
+  width: 158%;
+  max-width: none;
 }
 
 .eyebrow,
@@ -268,9 +283,9 @@ h1 {
     grid-template-columns: 1fr;
   }
 
-  .hero-logo {
+  .hero-logo-frame {
     grid-row: 1;
-    width: min(180px, 48vw);
+    width: min(160px, 44vw);
     margin: 0 0 28px auto;
   }
 
