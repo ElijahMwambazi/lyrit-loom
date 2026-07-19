@@ -10,7 +10,7 @@ importers:
     devDependencies:
       '@redocly/cli':
         specifier: 2.19.1
-        version: 2.19.1(@opentelemetry/api@1.9.1)(core-js@3.49.0)
+        version: 2.19.1(@opentelemetry/api@1.9.1)(core-js@3.49.0)(supports-color@10.2.2)
       openapi-typescript:
         specifier: ^7.13.0
         version: 7.13.0(typescript@5.9.3)
@@ -29,6 +29,9 @@ importers:
       react-dom:
         specifier: ^19.2.7
         version: 19.2.7(react@19.2.7)
+      wavesurfer.js:
+        specifier: 7.12.11
+        version: 7.12.11
     devDependencies:
       '@testing-library/jest-dom':
         specifier: ^6.9.1
@@ -50,7 +53,7 @@ importers:
         version: 6.0.3(vite@8.1.5(@types/node@24.13.3))
       jsdom:
         specifier: ^28.1.0
-        version: 28.1.0(@noble/hashes@1.8.0)
+        version: 28.1.0(@noble/hashes@1.8.0)(supports-color@10.2.2)
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -1550,6 +1553,9 @@ packages:
     resolution: {integrity: sha512-o8qghlI8NZHU1lLPrpi2+Uq7abh4GGPpYANlalzWxyWteJOCsr/P+oPBA49TOLu5FTZO4d3F9MnWJfiMo4BkmA==}
     engines: {node: '>=18'}
 
+  wavesurfer.js@7.12.11:
+    resolution: {integrity: sha512-Sx0yZIz7jRJ9J9p7UL+pl9y0UQBB6UN/XNo+R7Gy4tCR5xZI9jMyA0dnt1R8TMVSQ4LZ10SeB2HJYQ+dV2dPSA==}
+
   webidl-conversions@3.0.1:
     resolution: {integrity: sha512-2JAn3z8AR6rjK8Sm8orRC0h/bcl/DqL7tRPdGZ4I1CjdF+EaMLmYxBHyXuKL849eucPFhvBoxMsflfOb8kxaeQ==}
 
@@ -1856,7 +1862,7 @@ snapshots:
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
-  '@redocly/cli@2.19.1(@opentelemetry/api@1.9.1)(core-js@3.49.0)':
+  '@redocly/cli@2.19.1(@opentelemetry/api@1.9.1)(core-js@3.49.0)(supports-color@10.2.2)':
     dependencies:
       '@opentelemetry/exporter-trace-otlp-http': 0.202.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/resources': 2.0.1(@opentelemetry/api@1.9.1)
@@ -1881,7 +1887,7 @@ snapshots:
       redoc: 2.5.1(core-js@3.49.0)(mobx@6.16.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(styled-components@6.3.9(react-dom@19.2.7(react@19.2.7))(react@19.2.7))
       semver: 7.8.5
       set-cookie-parser: 2.7.2
-      simple-websocket: 9.1.0
+      simple-websocket: 9.1.0(supports-color@10.2.2)
       styled-components: 6.3.9(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       ulid: 3.0.2
       undici: 6.27.0
@@ -2346,7 +2352,7 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  http-proxy-agent@7.0.2:
+  http-proxy-agent@7.0.2(supports-color@10.2.2):
     dependencies:
       agent-base: 7.1.4
       debug: 4.4.3(supports-color@10.2.2)
@@ -2388,7 +2394,7 @@ snapshots:
     dependencies:
       argparse: 2.0.1
 
-  jsdom@28.1.0(@noble/hashes@1.8.0):
+  jsdom@28.1.0(@noble/hashes@1.8.0)(supports-color@10.2.2):
     dependencies:
       '@acemir/cssom': 0.9.31
       '@asamuzakjp/dom-selector': 6.8.1
@@ -2398,7 +2404,7 @@ snapshots:
       data-urls: 7.0.0(@noble/hashes@1.8.0)
       decimal.js: 10.6.0
       html-encoding-sniffer: 6.0.0(@noble/hashes@1.8.0)
-      http-proxy-agent: 7.0.2
+      http-proxy-agent: 7.0.2(supports-color@10.2.2)
       https-proxy-agent: 7.0.6(supports-color@10.2.2)
       is-potential-custom-element-name: 1.0.1
       parse5: 8.0.1
@@ -2838,7 +2844,7 @@ snapshots:
 
   signal-exit@4.1.0: {}
 
-  simple-websocket@9.1.0:
+  simple-websocket@9.1.0(supports-color@10.2.2):
     dependencies:
       debug: 4.4.3(supports-color@10.2.2)
       queue-microtask: 1.2.3
@@ -3017,13 +3023,15 @@ snapshots:
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
       '@types/node': 24.13.3
-      jsdom: 28.1.0(@noble/hashes@1.8.0)
+      jsdom: 28.1.0(@noble/hashes@1.8.0)(supports-color@10.2.2)
     transitivePeerDependencies:
       - msw
 
   w3c-xmlserializer@5.0.0:
     dependencies:
       xml-name-validator: 5.0.0
+
+  wavesurfer.js@7.12.11: {}
 
   webidl-conversions@3.0.1: {}
 

@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
+import { waveSurferTestDoubles } from "./test/setup";
 
 const project = {
   id: "00000000-0000-4000-8000-000000000010",
@@ -393,24 +394,44 @@ describe("App", () => {
     const button = await screen.findByRole("button", { name: "Transcribe audio" });
     fireEvent.click(button);
     await waitFor(() => expect(EventSourceMock.instance).toBeDefined());
-    EventSourceMock.instance.emit("progress", {
-      status: "running",
-      phase: "transcribing",
-      progress: 0.65,
+    act(() => {
+      EventSourceMock.instance.emit("progress", {
+        status: "running",
+        phase: "transcribing",
+        progress: 0.65,
+      });
     });
     expect(await screen.findByText("transcribing · 65%")).toBeInTheDocument();
 
     transcriptReady = true;
-    EventSourceMock.instance.emit("succeeded", {
-      status: "succeeded",
-      phase: "complete",
-      progress: 1,
+    act(() => {
+      EventSourceMock.instance.emit("succeeded", {
+        status: "succeeded",
+        phase: "complete",
+        progress: 1,
+      });
     });
     expect(await screen.findByRole("button", { name: /Weave, 99% confidence/ })).toBeInTheDocument();
-    expect(screen.getByLabelText(`${project.name} source audio`)).toHaveAttribute(
-      "src",
-      `/api/v1/artifacts/${audioAsset.id}/content`,
+    expect(
+      screen.getByRole("region", {
+        name: `${project.name} waveform and transport`,
+      }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Play audio" })).toBeEnabled(),
     );
+    const waveform = waveSurferTestDoubles[0]!;
+    act(() => waveform.emit("timeupdate", 0.7));
+    expect(
+      screen.getByRole("button", {
+        name: "motion, 72% confidence, review suggested, starts at 0:00",
+      }),
+    ).toHaveClass("is-active");
+    fireEvent.click(
+      screen.getByRole("button", { name: /Weave, 99% confidence/ }),
+    );
+    expect(waveform.currentTime).toBe(0);
+    expect(waveform.playing).toBe(true);
     expect(
       screen.getByRole("button", {
         name: "motion, 72% confidence, review suggested, starts at 0:00",

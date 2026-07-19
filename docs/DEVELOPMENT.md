@@ -101,6 +101,8 @@ Project asset responses include an owner-scoped `content_url`. The content endpo
 
 Transcript edits use `PUT /api/v1/projects/{project_id}/transcript` with the exact strong ETag returned by `GET`. Every successful save inserts a new immutable revision with `source=edited`; it never updates the prior JSON in place. Missing preconditions return `428`, stale revisions return `412`, and invalid word ordering or bounds return `422`. The web editor reloads the latest revision after a conflict and exposes direct millisecond inputs plus ±50 ms timing nudges.
 
+The transcript player uses WaveSurfer to decode and draw source audio entirely in the browser. Its word markers and playhead synchronize with both the accessible word list and editor focus. Focus the waveform region and use `Space` or `K` for play/pause and the arrow keys for five-second seeking; the visible controls also expose playback speed and exact position. A native audio control is shown if waveform decoding fails.
+
 ## Project API
 
 The first Milestone 1 slice implements `POST /projects`, `GET /projects`, `GET /projects/{project_id}`, and `PATCH /projects/{project_id}` from the OpenAPI contract. Project names are trimmed and limited to 120 characters; video settings enforce supported dimensions and frame rates in the application layer. PostgreSQL owns the durable records and timestamps.

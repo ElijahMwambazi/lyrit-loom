@@ -9,6 +9,11 @@ import {
   useState,
 } from "react";
 
+import {
+  WaveformTimeline,
+  type WaveformTimelineHandle,
+} from "./WaveformTimeline";
+
 type Readiness = "checking" | "ready" | "unavailable";
 type Project = components["schemas"]["Project"];
 type Asset = components["schemas"]["Asset"];
@@ -603,30 +608,32 @@ function TranscriptReview({
   transcript,
   onSave,
 }: TranscriptReviewProps) {
-  const audioRef = useRef<HTMLAudioElement>(null);
+  const waveformRef = useRef<WaveformTimelineHandle>(null);
   const [activeWordId, setActiveWordId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [draftCues, setDraftCues] = useState(() => cloneCues(transcript.cues));
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const words = transcript.cues.flatMap((cue) => cue.words);
+  const timelineWords = (editing ? draftCues : transcript.cues).flatMap(
+    (cue) => cue.words,
+  );
 
   useEffect(() => {
     setDraftCues(cloneCues(transcript.cues));
   }, [transcript]);
 
-  function seekToWord(word: Transcript["cues"][number]["words"][number]) {
-    const player = audioRef.current;
-    if (!player) return;
-    player.currentTime = word.start_ms / 1000;
+  function seekToWord(
+    word: Transcript["cues"][number]["words"][number],
+    autoplay = true,
+  ) {
     setActiveWordId(word.id);
-    void player.play().catch(() => undefined);
+    waveformRef.current?.seekToMs(word.start_ms, autoplay);
   }
 
-  function syncActiveWord() {
-    const position = (audioRef.current?.currentTime ?? 0) * 1000;
-    const active = words.find(
-      (word) => position >= word.start_ms && position < word.end_ms,
+  function syncActiveWord(positionMs: number) {
+    const active = timelineWords.find(
+      (word) => positionMs >= word.start_ms && positionMs < word.end_ms,
     );
     setActiveWordId(active?.id ?? null);
   }
@@ -689,15 +696,15 @@ function TranscriptReview({
           </button>
         </div>
       </div>
-      <audio
-        ref={audioRef}
-        className="transcript-audio"
-        aria-label={`${projectName} source audio`}
-        controls
-        preload="metadata"
+      <WaveformTimeline
+        ref={waveformRef}
+        label={projectName}
         src={audio.content_url ?? `/api/v1/artifacts/${audio.id}/content`}
-        onTimeUpdate={syncActiveWord}
-        onSeeked={syncActiveWord}
+        durationMs={transcript.duration_ms}
+        words={timelineWords}
+        activeWordId={activeWordId}
+        onPositionChange={syncActiveWord}
+        onSelectWord={setActiveWordId}
       />
       {editing ? (
         <div className="transcript-editor" id={`${projectId}-transcript-editor`}>
@@ -705,13 +712,17 @@ function TranscriptReview({
             <fieldset className="transcript-edit-cue" key={cue.id}>
               <legend>Cue {cueIndex + 1}</legend>
               {cue.words.map((word, wordIndex) => (
-                <div className="transcript-edit-word" key={word.id}>
+                <div
+                  className={`transcript-edit-word ${activeWordId === word.id ? "is-active" : ""}`}
+                  key={word.id}
+                >
                   <label>
                     <span>Word {wordIndex + 1}</span>
                     <input
                       aria-label={`Cue ${cueIndex + 1} word ${wordIndex + 1} text`}
                       value={word.text}
                       maxLength={200}
+                      onFocus={() => seekToWord(word, false)}
                       onChange={(event) =>
                         updateWord(cueIndex, wordIndex, { text: event.target.value })
                       }

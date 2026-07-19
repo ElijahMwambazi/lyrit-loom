@@ -13,7 +13,8 @@
   "dependencies": {
     "@lyrit/api-client": "workspace:*",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "wavesurfer.js": "7.12.11"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
