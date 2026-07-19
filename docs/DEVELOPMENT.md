@@ -102,6 +102,8 @@ MAX_UPLOAD_BYTES=536870912
 MAX_AUDIO_DURATION_MS=900000
 ```
 
+The Compose web proxy accepts 513 MiB request bodies (the 512 MiB source-file ceiling plus multipart overhead) and disables request buffering so uploads stream to the API. Keep `infra/nginx.conf` aligned if `MAX_UPLOAD_BYTES` changes.
+
 Compose stores originals in the shared `artifact-data` volume mounted into both API and worker containers. Host development requires `ffprobe` on `PATH` unless `FFPROBE_PATH` is set explicitly.
 
 ## Checks
