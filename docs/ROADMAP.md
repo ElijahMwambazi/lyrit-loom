@@ -10,8 +10,8 @@ Last updated: 2026-07-19
 | --- | --- | --- |
 | 0 — Foundation | Complete | The full local stack starts, reports readiness, and completes durable jobs. |
 | 1 — Projects and media ingestion | Complete | Projects accept validated audio and background source media. |
-| 2 — Transcription | Current focus | Active audio becomes an editable word-timed transcript revision. |
-| 3 — Timeline editor | Upcoming | Lyrics and word timing can be corrected safely. |
+| 2 — Transcription | Complete | Active audio becomes a reviewable word-timed transcript revision. |
+| 3 — Timeline editor | Current focus | Lyrics and word timing can be corrected safely. |
 | 4 — ASS compiler | Upcoming | Transcript snapshots compile into deterministic subtitles. |
 | 5 — Render pipeline | Upcoming | Projects render into verified downloadable MP4 files. |
 | 6 — Private beta hardening | Upcoming | Real users and projects are isolated, observable, and recoverable. |
@@ -51,11 +51,9 @@ Verified: 2026-07-19.
 
 Verified: 2026-07-19.
 
-## Current focus
-
 ### Milestone 2 — Audio normalization and transcription
 
-The next vertical slice should remain deterministic and model-free first. It will run through the existing worker and fake transcriber before optional Whisper inference is introduced.
+This milestone established a deterministic, model-free path through the existing worker and fake transcriber before optional Whisper inference is introduced.
 
 - [x] Define the versioned Rust-to-Python transcriber contract and fake adapter.
 - [x] Provide durable job claiming, progress events, leases, and worker recovery primitives.
@@ -68,14 +66,12 @@ The next vertical slice should remain deterministic and model-free first. It wil
 - [x] Validate transcriber output and reject invalid or unordered word timestamps.
 - [x] Persist immutable transcript revisions and their runtime metadata.
 - [x] Add the active transcript endpoint with ETag support.
-- [ ] Add transcript review, confidence hints, and audio playback to the web workspace.
+- [x] Add transcript review, confidence hints, and audio playback to the web workspace.
 - [x] Cover queue-to-transcript completion with deterministic integration and UI tests.
 
-Vertical slice verified through the production web proxy and Compose worker on 2026-07-19. Repeating an enqueue with the same idempotency key returned the original job; durable events covered queued, normalization, transcription, validation, finalization, and success; the active revision returned a revision ETag and six ordered fake words.
+Verified through the production web proxy and Compose worker on 2026-07-19. Repeated enqueueing returned the original job; the active revision returned a revision ETag and six ordered fake words. Authorized audio returned checksum-identical full content, exact partial ranges for seeking, and `416` for invalid ranges; the web review renders timed words, confidence hints, and synchronized source playback.
 
-The model-free queue-to-transcript path is complete. Milestone 2 remains current until the web workspace adds audio playback and confidence-aware transcript review.
-
-## Upcoming
+## Current focus
 
 ### Milestone 3 — Waveform timeline editor
 
@@ -83,6 +79,8 @@ The model-free queue-to-transcript path is complete. Milestone 2 remains current
 - [ ] Support text editing, timing nudges, cue bounds, split, and merge.
 - [ ] Save immutable revisions with optimistic concurrency and conflict recovery.
 - [ ] Provide a keyboard-accessible transcript editing workflow.
+
+## Upcoming
 
 ### Milestone 4 — Deterministic ASS compiler
 

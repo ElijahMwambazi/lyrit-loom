@@ -1072,7 +1072,10 @@ export interface operations {
     downloadArtifact: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description A single RFC 9110 byte range used for media seeking */
+                Range?: string;
+            };
             path: {
                 artifact_id: components["parameters"]["ArtifactId"];
             };
@@ -1083,19 +1086,50 @@ export interface operations {
             /** @description Artifact bytes */
             200: {
                 headers: {
-                    /** @example attachment; filename="lyric-video.mp4" */
+                    "Accept-Ranges"?: "bytes";
+                    /** @example inline */
                     "Content-Disposition"?: string;
                     ETag?: string;
                     [name: string]: unknown;
                 };
                 content: {
                     "application/octet-stream": string;
+                    "audio/mpeg": string;
+                    "audio/mp4": string;
+                    "audio/flac": string;
+                    "audio/ogg": string;
+                    "audio/webm": string;
+                    "audio/wav": string;
                     "video/mp4": string;
                     "text/x-ssa": string;
                 };
             };
+            /** @description Requested artifact byte range */
+            206: {
+                headers: {
+                    "Accept-Ranges"?: "bytes";
+                    "Content-Range": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                    "audio/mpeg": string;
+                    "audio/mp4": string;
+                    "audio/flac": string;
+                    "audio/ogg": string;
+                    "audio/webm": string;
+                    "audio/wav": string;
+                };
+            };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+            /** @description Requested byte range is not satisfiable */
+            416: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
 }

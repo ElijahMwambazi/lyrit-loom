@@ -2,9 +2,13 @@ use std::{convert::Infallible, time::Duration};
 
 use axum::{
     Json, Router,
+    body::Body,
     extract::{DefaultBodyLimit, Multipart, Path, Query, State},
-    http::{HeaderMap, HeaderName, StatusCode, header},
-    response::sse::{Event, KeepAlive, Sse},
+    http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
+    response::{
+        IntoResponse, Response,
+        sse::{Event, KeepAlive, Sse},
+    },
     routing::{get, post},
 };
 use lyrit_api_model::{
@@ -12,7 +16,9 @@ use lyrit_api_model::{
     JobResponse, ProjectPageResponse, ProjectResponse, ReadinessCheck, ReadinessResponse,
     StartTranscriptionRequest, TranscriptRevisionResponse, UpdateProjectRequest,
 };
-use lyrit_application::{ApplicationError, ProjectChanges, StartTranscription, UploadAsset};
+use lyrit_application::{
+    ApplicationError, ByteRange, ProjectChanges, StartTranscription, UploadAsset,
+};
 use lyrit_domain::{AssetKind, Project};
 use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
@@ -46,7 +52,8 @@ pub fn router(state: AppState) -> Router {
             get(get_project).patch(update_project),
         )
         .route("/jobs/{job_id}", get(get_job))
-        .route("/jobs/{job_id}/events", get(stream_job_events));
+        .route("/jobs/{job_id}/events", get(stream_job_events))
+        .route("/artifacts/{artifact_id}/content", get(download_artifact));
 
     if state.enable_dev_routes {
         api = api.route("/internal/dev/jobs/probe", post(enqueue_probe));
@@ -231,6 +238,121 @@ async fn hydrate_project_response(
     ))
 }
 
+async fn download_artifact(
+    State(state): State<AppState>,
+    Path(artifact_id): Path<Uuid>,
+    request_headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let asset = state
+        .assets
+        .get_for_owner(LOCAL_OWNER_ID, artifact_id)
+        .await?
+        .ok_or(ApplicationError::NotFound)?;
+    let total_bytes = u64::try_from(asset.bytes)
+        .map_err(|_| ApplicationError::InvalidData("asset byte count is invalid".to_owned()))?;
+    if total_bytes == 0 {
+        return Err(
+            ApplicationError::InvalidData("asset byte count must be positive".to_owned()).into(),
+        );
+    }
+    let requested_range = match request_headers.get(header::RANGE) {
+        Some(value) => match value
+            .to_str()
+            .ok()
+            .and_then(|value| parse_range(value, total_bytes))
+        {
+            Some(range) => Some(range),
+            None => return Ok(range_not_satisfiable(total_bytes)),
+        },
+        None => None,
+    };
+    let content = state
+        .assets
+        .content(LOCAL_OWNER_ID, artifact_id, requested_range)
+        .await?;
+    let content_length = content.end_inclusive - content.start + 1;
+    let mut headers = HeaderMap::new();
+    headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    headers.insert(
+        header::CONTENT_LENGTH,
+        HeaderValue::from_str(&content_length.to_string())
+            .expect("numeric content length should be a valid header"),
+    );
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(&content.asset.media_type)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_static("inline"),
+    );
+    headers.insert(
+        header::ETAG,
+        HeaderValue::from_str(&format!("\"{}\"", content.asset.sha256))
+            .expect("asset checksum should be a valid ETag"),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, no-store"),
+    );
+    let status = if requested_range.is_some() {
+        headers.insert(
+            header::CONTENT_RANGE,
+            HeaderValue::from_str(&format!(
+                "bytes {}-{}/{}",
+                content.start, content.end_inclusive, content.total_bytes
+            ))
+            .expect("numeric content range should be a valid header"),
+        );
+        StatusCode::PARTIAL_CONTENT
+    } else {
+        StatusCode::OK
+    };
+    Ok((status, headers, Body::from_stream(content.body)).into_response())
+}
+
+fn parse_range(value: &str, total_bytes: u64) -> Option<ByteRange> {
+    let value = value.strip_prefix("bytes=")?;
+    if value.contains(',') {
+        return None;
+    }
+    let (start, end) = value.split_once('-')?;
+    if start.is_empty() {
+        let length = end.parse::<u64>().ok()?.min(total_bytes);
+        if length == 0 {
+            return None;
+        }
+        return Some(ByteRange {
+            start: total_bytes - length,
+            end_inclusive: total_bytes - 1,
+        });
+    }
+    let start = start.parse::<u64>().ok()?;
+    if start >= total_bytes {
+        return None;
+    }
+    let end_inclusive = if end.is_empty() {
+        total_bytes - 1
+    } else {
+        end.parse::<u64>().ok()?.min(total_bytes - 1)
+    };
+    (start <= end_inclusive).then_some(ByteRange {
+        start,
+        end_inclusive,
+    })
+}
+
+fn range_not_satisfiable(total_bytes: u64) -> Response {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_RANGE,
+        HeaderValue::from_str(&format!("bytes */{total_bytes}"))
+            .expect("numeric content range should be a valid header"),
+    );
+    (StatusCode::RANGE_NOT_SATISFIABLE, headers).into_response()
+}
+
 fn multipart_error(error: axum::extract::multipart::MultipartError) -> ApiError {
     ApplicationError::Validation(format!("invalid multipart request: {error}")).into()
 }
@@ -389,4 +511,30 @@ async fn stream_job_events(
             .interval(Duration::from_secs(15))
             .text("keep-alive"),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_range;
+
+    #[test]
+    fn parses_bounded_open_and_suffix_ranges() {
+        let bounded = parse_range("bytes=2-5", 10).unwrap();
+        assert_eq!((bounded.start, bounded.end_inclusive), (2, 5));
+
+        let open = parse_range("bytes=7-", 10).unwrap();
+        assert_eq!((open.start, open.end_inclusive), (7, 9));
+
+        let suffix = parse_range("bytes=-3", 10).unwrap();
+        assert_eq!((suffix.start, suffix.end_inclusive), (7, 9));
+    }
+
+    #[test]
+    fn rejects_invalid_or_multiple_ranges() {
+        assert!(parse_range("items=0-1", 10).is_none());
+        assert!(parse_range("bytes=10-", 10).is_none());
+        assert!(parse_range("bytes=5-4", 10).is_none());
+        assert!(parse_range("bytes=0-1,3-4", 10).is_none());
+        assert!(parse_range("bytes=-0", 10).is_none());
+    }
 }

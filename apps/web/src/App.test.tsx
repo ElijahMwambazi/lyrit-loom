@@ -300,7 +300,7 @@ describe("App", () => {
               text: "motion",
               start_ms: 600,
               end_ms: 1200,
-              confidence: 0.98,
+              confidence: 0.72,
             },
           ],
         },
@@ -385,6 +385,15 @@ describe("App", () => {
       phase: "complete",
       progress: 1,
     });
-    expect(await screen.findByText("Weave motion")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Weave, 99% confidence/ })).toBeInTheDocument();
+    expect(screen.getByLabelText(`${project.name} source audio`)).toHaveAttribute(
+      "src",
+      `/api/v1/artifacts/${audioAsset.id}/content`,
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "motion, 72% confidence, review suggested, starts at 0:00",
+      }),
+    ).toHaveClass("confidence-review");
   });
 });

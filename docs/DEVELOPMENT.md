@@ -97,6 +97,8 @@ LYRIT_TRANSCRIBER_MODE=fake
 
 The Compose worker supplies these values and shares the source artifact volume with the API. Its per-job workspace is removed after success or failure. To exercise the feature, upload audio in the web workspace and select **Transcribe audio**. Progress arrives over the existing job SSE endpoint; the final revision is available at `GET /api/v1/projects/{project_id}/transcript` with a revision ETag.
 
+Project asset responses include an owner-scoped `content_url`. The content endpoint streams rather than buffering the object, supports one standard byte range for browser seeking, and returns `416` for invalid or multiple ranges. The transcript review player uses this URL; selecting a timed word seeks playback to its start. Words below 85% confidence are visually marked for review, but confidence remains a hint rather than an acceptance gate.
+
 ## Project API
 
 The first Milestone 1 slice implements `POST /projects`, `GET /projects`, `GET /projects/{project_id}`, and `PATCH /projects/{project_id}` from the OpenAPI contract. Project names are trimmed and limited to 120 characters; video settings enforce supported dimensions and frame rates in the application layer. PostgreSQL owns the durable records and timestamps.

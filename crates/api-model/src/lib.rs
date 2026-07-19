@@ -225,7 +225,7 @@ impl From<Asset> for AssetResponse {
             duration_ms: asset.duration_ms,
             width: asset.width,
             height: asset.height,
-            content_url: None,
+            content_url: Some(format!("/api/v1/artifacts/{}/content", asset.id)),
             created_at: format_time(asset.created_at),
         }
     }

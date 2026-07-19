@@ -7,13 +7,19 @@ use std::{
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use lyrit_application::{
-    ApplicationError, ArtifactStore, ByteStream, MediaFacts, MediaInspector, StoredObject,
+    ApplicationError, ArtifactStore, ByteRange, ByteStream, MediaFacts, MediaInspector,
+    StoredObject,
 };
 use lyrit_domain::AssetKind;
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use tokio::{fs, io::AsyncWriteExt, process::Command, time::timeout};
+use tokio::{
+    fs,
+    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
+    process::Command,
+    time::timeout,
+};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -125,6 +131,46 @@ impl ArtifactStore for LocalArtifactStore {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(artifact_error(error)),
         }
+    }
+
+    async fn open(
+        &self,
+        storage_key: &str,
+        range: ByteRange,
+    ) -> Result<ByteStream<'static>, ApplicationError> {
+        let path = self.resolve(storage_key)?;
+        let mut file = fs::File::open(path).await.map_err(artifact_error)?;
+        file.seek(std::io::SeekFrom::Start(range.start))
+            .await
+            .map_err(artifact_error)?;
+        let remaining = range
+            .end_inclusive
+            .checked_sub(range.start)
+            .and_then(|length| length.checked_add(1))
+            .ok_or_else(|| ApplicationError::Artifact("invalid artifact range".to_owned()))?;
+        let stream = futures_util::stream::try_unfold(
+            (file, remaining),
+            |(mut file, remaining)| async move {
+                if remaining == 0 {
+                    return Ok(None);
+                }
+                let chunk_size = usize::try_from(remaining.min(64 * 1024))
+                    .expect("bounded artifact chunk size should fit usize");
+                let mut buffer = vec![0_u8; chunk_size];
+                let read = file.read(&mut buffer).await.map_err(artifact_error)?;
+                if read == 0 {
+                    return Err(ApplicationError::Artifact(
+                        "artifact ended before its persisted byte count".to_owned(),
+                    ));
+                }
+                buffer.truncate(read);
+                Ok(Some((
+                    bytes::Bytes::from(buffer),
+                    (file, remaining - read as u64),
+                )))
+            },
+        );
+        Ok(Box::pin(stream))
     }
 }
 
@@ -333,6 +379,8 @@ fn artifact_error(error: std::io::Error) -> ApplicationError {
 
 #[cfg(test)]
 mod tests {
+    use futures_util::TryStreamExt;
+
     use super::*;
 
     #[test]
@@ -409,6 +457,20 @@ mod tests {
                 .unwrap(),
             b"hello"
         );
+        let chunks: Vec<bytes::Bytes> = store
+            .open(
+                "projects/test/assets/good/source",
+                ByteRange {
+                    start: 1,
+                    end_inclusive: 3,
+                },
+            )
+            .await
+            .unwrap()
+            .try_collect()
+            .await
+            .unwrap();
+        assert_eq!(chunks.concat(), b"ell");
 
         let oversize = store
             .put(

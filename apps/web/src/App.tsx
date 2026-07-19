@@ -179,6 +179,13 @@ export function App() {
     setProjects((current) =>
       current.map((project) => (project.id === data.id ? data : project)),
     );
+    if (!data.active_transcript_revision) {
+      setTranscripts((current) => {
+        const next = { ...current };
+        delete next[projectId];
+        return next;
+      });
+    }
     if (uploadStateKey) {
       setUploads((current) => {
         const next = { ...current };
@@ -450,19 +457,25 @@ export function App() {
                       />
                     </div>
                     {project.audio_asset && (
-                      <div className="transcription-panel">
-                        <div>
-                          <strong>Word transcript</strong>
-                          <p>
-                            {transcripts[project.id]
-                              ? transcriptText(transcripts[project.id]!)
-                              : transcriptionJobs[project.id]
+                      <div className={`transcription-panel ${transcripts[project.id] ? "has-transcript" : ""}`}>
+                        {transcripts[project.id] ? (
+                          <TranscriptReview
+                            projectName={project.name}
+                            audio={project.audio_asset}
+                            transcript={transcripts[project.id]!}
+                          />
+                        ) : (
+                          <div>
+                            <strong>Word transcript</strong>
+                            <p>
+                              {transcriptionJobs[project.id]
                                 ? `${transcriptionJobs[project.id]!.phase.replaceAll("_", " ")} · ${Math.round(transcriptionJobs[project.id]!.progress * 100)}%`
                                 : project.active_transcript_revision
-                                  ? "Transcript revision ready"
+                                  ? "Loading transcript revision…"
                                   : "Generate editable word-level timing from the active audio."}
-                          </p>
-                        </div>
+                            </p>
+                          </div>
+                        )}
                         <button
                           type="button"
                           className="button-secondary"
@@ -515,6 +528,83 @@ export function App() {
         </div>
       </details>
     </main>
+  );
+}
+
+type TranscriptReviewProps = {
+  projectName: string;
+  audio: Asset;
+  transcript: Transcript;
+};
+
+function TranscriptReview({ projectName, audio, transcript }: TranscriptReviewProps) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [activeWordId, setActiveWordId] = useState<string | null>(null);
+  const words = transcript.cues.flatMap((cue) => cue.words);
+
+  function seekToWord(word: Transcript["cues"][number]["words"][number]) {
+    const player = audioRef.current;
+    if (!player) return;
+    player.currentTime = word.start_ms / 1000;
+    setActiveWordId(word.id);
+    void player.play().catch(() => undefined);
+  }
+
+  function syncActiveWord() {
+    const position = (audioRef.current?.currentTime ?? 0) * 1000;
+    const active = words.find(
+      (word) => position >= word.start_ms && position < word.end_ms,
+    );
+    setActiveWordId(active?.id ?? null);
+  }
+
+  return (
+    <div className="transcript-review">
+      <div className="transcript-review-heading">
+        <div>
+          <strong>Word transcript</strong>
+          <p>
+            Revision {transcript.revision} · {words.length} words · {transcript.language.toUpperCase()}
+          </p>
+        </div>
+        <span>{formatDuration(transcript.duration_ms)}</span>
+      </div>
+      <audio
+        ref={audioRef}
+        className="transcript-audio"
+        aria-label={`${projectName} source audio`}
+        controls
+        preload="metadata"
+        src={audio.content_url ?? `/api/v1/artifacts/${audio.id}/content`}
+        onTimeUpdate={syncActiveWord}
+        onSeeked={syncActiveWord}
+      />
+      <div className="confidence-legend" aria-label="Word confidence legend">
+        <span><i className="confidence-high" />High</span>
+        <span><i className="confidence-review" />Review</span>
+      </div>
+      <div className="transcript-cues" aria-label="Timed transcript words">
+        {transcript.cues.map((cue) => (
+          <div className="transcript-cue" key={cue.id}>
+            {cue.words.map((word) => {
+              const confidence = confidenceLevel(word.confidence);
+              return (
+                <button
+                  type="button"
+                  key={word.id}
+                  className={`transcript-word confidence-${confidence.level} ${activeWordId === word.id ? "is-active" : ""}`}
+                  title={`${formatDuration(word.start_ms)} · ${confidence.label}`}
+                  aria-label={`${word.text}, ${confidence.label}, starts at ${formatDuration(word.start_ms)}`}
+                  onClick={() => seekToWord(word)}
+                >
+                  {word.text}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -619,10 +709,19 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function transcriptText(transcript: Transcript) {
-  return transcript.cues
-    .flatMap((cue) => cue.words.map((word) => word.text))
-    .join(" ");
+function confidenceLevel(confidence: number | null | undefined) {
+  if (confidence == null) return { level: "unknown", label: "confidence unavailable" };
+  const percentage = Math.round(confidence * 100);
+  return confidence < 0.85
+    ? { level: "review", label: `${percentage}% confidence, review suggested` }
+    : { level: "high", label: `${percentage}% confidence` };
+}
+
+function formatDuration(durationMs: number) {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}:${seconds}`;
 }
 
 function uploadError(request: XMLHttpRequest) {

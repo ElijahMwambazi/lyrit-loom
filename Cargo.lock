@@ -917,6 +917,7 @@ name = "lyrit-media"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bytes",
  "futures-util",
  "lyrit-application",
  "lyrit-domain",

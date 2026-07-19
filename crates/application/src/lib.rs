@@ -62,6 +62,20 @@ pub struct StoredObject {
     pub sha256: String,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ByteRange {
+    pub start: u64,
+    pub end_inclusive: u64,
+}
+
+pub struct AssetContent {
+    pub asset: Asset,
+    pub body: ByteStream<'static>,
+    pub start: u64,
+    pub end_inclusive: u64,
+    pub total_bytes: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct MediaFacts {
     pub media_type: String,
@@ -249,6 +263,11 @@ fn validate_transcript(transcript: &ActivateTranscript) -> Result<(), Applicatio
 #[async_trait]
 pub trait AssetRepository: Clone + Send + Sync + 'static {
     async fn get(&self, id: Uuid) -> Result<Option<Asset>, ApplicationError>;
+    async fn get_for_owner(
+        &self,
+        owner_id: Uuid,
+        id: Uuid,
+    ) -> Result<Option<Asset>, ApplicationError>;
     async fn activate(
         &self,
         owner_id: Uuid,
@@ -265,6 +284,11 @@ pub trait ArtifactStore: Clone + Send + Sync + 'static {
         max_bytes: i64,
     ) -> Result<StoredObject, ApplicationError>;
     async fn delete(&self, storage_key: &str) -> Result<(), ApplicationError>;
+    async fn open(
+        &self,
+        storage_key: &str,
+        range: ByteRange,
+    ) -> Result<ByteStream<'static>, ApplicationError>;
 }
 
 #[async_trait]
@@ -321,6 +345,51 @@ where
 
     pub async fn get(&self, id: Uuid) -> Result<Option<Asset>, ApplicationError> {
         self.assets.get(id).await
+    }
+
+    pub async fn get_for_owner(
+        &self,
+        owner_id: Uuid,
+        id: Uuid,
+    ) -> Result<Option<Asset>, ApplicationError> {
+        self.assets.get_for_owner(owner_id, id).await
+    }
+
+    pub async fn content(
+        &self,
+        owner_id: Uuid,
+        id: Uuid,
+        requested_range: Option<ByteRange>,
+    ) -> Result<AssetContent, ApplicationError> {
+        let asset = self
+            .assets
+            .get_for_owner(owner_id, id)
+            .await?
+            .ok_or(ApplicationError::NotFound)?;
+        let total_bytes = u64::try_from(asset.bytes)
+            .map_err(|_| ApplicationError::InvalidData("asset byte count is invalid".to_owned()))?;
+        if total_bytes == 0 {
+            return Err(ApplicationError::InvalidData(
+                "asset byte count must be positive".to_owned(),
+            ));
+        }
+        let range = requested_range.unwrap_or(ByteRange {
+            start: 0,
+            end_inclusive: total_bytes - 1,
+        });
+        if range.start > range.end_inclusive || range.end_inclusive >= total_bytes {
+            return Err(ApplicationError::Validation(
+                "requested byte range is not satisfiable".to_owned(),
+            ));
+        }
+        let body = self.store.open(&asset.storage_key, range).await?;
+        Ok(AssetContent {
+            asset,
+            body,
+            start: range.start,
+            end_inclusive: range.end_inclusive,
+            total_bytes,
+        })
     }
 
     pub async fn upload(

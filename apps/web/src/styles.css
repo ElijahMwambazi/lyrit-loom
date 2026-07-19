@@ -460,6 +460,119 @@ input:hover {
   margin: 0;
 }
 
+.transcription-panel.has-transcript {
+  align-items: start;
+}
+
+.transcript-review {
+  min-width: 0;
+}
+
+.transcript-review-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.transcript-review-heading > span {
+  color: #8c9099;
+  font: 600 0.68rem/1.4 "IBM Plex Mono", monospace;
+}
+
+.transcript-audio {
+  width: 100%;
+  height: 34px;
+  margin-top: 11px;
+  color-scheme: dark;
+}
+
+.confidence-legend {
+  display: flex;
+  gap: 13px;
+  margin-top: 10px;
+  color: #777b84;
+  font-size: 0.64rem;
+}
+
+.confidence-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.confidence-legend i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.confidence-legend .confidence-high {
+  background: #4ec9b0;
+}
+
+.confidence-legend .confidence-review {
+  background: #e2c08d;
+}
+
+.transcript-cues {
+  display: grid;
+  gap: 7px;
+  max-height: 156px;
+  margin-top: 10px;
+  overflow-y: auto;
+  scrollbar-color: #3a3e47 transparent;
+}
+
+.transcript-cue {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.transcript-word {
+  border: 1px solid #313640;
+  border-radius: 4px;
+  padding: 4px 6px;
+  background: #1a1d22;
+  color: #c8cbd1;
+  font: inherit;
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.transcript-word::after {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  margin: 0 0 1px 5px;
+  border-radius: 50%;
+  background: #4ec9b0;
+  content: "";
+}
+
+.transcript-word.confidence-review {
+  border-color: #66583e;
+  background: #27231b;
+  color: #e3c898;
+}
+
+.transcript-word.confidence-review::after {
+  background: #e2c08d;
+}
+
+.transcript-word.confidence-unknown::after {
+  background: #777b84;
+}
+
+.transcript-word:hover,
+.transcript-word.is-active {
+  border-color: #3794ff;
+  background: #19324c;
+  color: #f1f6fc;
+}
+
 .upload-progress {
   height: 4px;
   margin-top: 9px;

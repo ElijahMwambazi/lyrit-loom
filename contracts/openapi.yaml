@@ -487,19 +487,54 @@ paths:
       summary: Download an authorized project artifact
       parameters:
         - $ref: "#/components/parameters/ArtifactId"
+        - name: Range
+          in: header
+          required: false
+          description: A single RFC 9110 byte range used for media seeking
+          schema:
+            type: string
+            example: bytes=0-65535
       responses:
         "200":
           description: Artifact bytes
           headers:
+            Accept-Ranges:
+              schema:
+                type: string
+                const: bytes
             Content-Disposition:
               schema:
                 type: string
-              example: attachment; filename="lyric-video.mp4"
+              example: inline
             ETag:
               schema:
                 type: string
           content:
             application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+            audio/mp4:
+              schema:
+                type: string
+                format: binary
+            audio/flac:
+              schema:
+                type: string
+                format: binary
+            audio/ogg:
+              schema:
+                type: string
+                format: binary
+            audio/webm:
+              schema:
+                type: string
+                format: binary
+            audio/wav:
               schema:
                 type: string
                 format: binary
@@ -510,6 +545,49 @@ paths:
             text/x-ssa:
               schema:
                 type: string
+        "206":
+          description: Requested artifact byte range
+          headers:
+            Accept-Ranges:
+              schema:
+                type: string
+                const: bytes
+            Content-Range:
+              required: true
+              schema:
+                type: string
+                example: bytes 0-65535/1048576
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+            audio/mp4:
+              schema:
+                type: string
+                format: binary
+            audio/flac:
+              schema:
+                type: string
+                format: binary
+            audio/ogg:
+              schema:
+                type: string
+                format: binary
+            audio/webm:
+              schema:
+                type: string
+                format: binary
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        "416":
+          description: Requested byte range is not satisfiable
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":

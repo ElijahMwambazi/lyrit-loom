@@ -260,6 +260,29 @@ impl AssetRepository for PgAssetRepository {
             .transpose()
     }
 
+    async fn get_for_owner(
+        &self,
+        owner_id: Uuid,
+        id: Uuid,
+    ) -> Result<Option<Asset>, ApplicationError> {
+        let query = format!(
+            r#"
+            SELECT {ASSET_COLUMNS}
+            FROM assets
+            WHERE id = $2
+              AND project_id IN (SELECT id FROM projects WHERE owner_id = $1)
+            "#
+        );
+        sqlx::query_as::<_, AssetRecord>(&query)
+            .bind(owner_id)
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(repository_error)?
+            .map(Asset::try_from)
+            .transpose()
+    }
+
     async fn activate(
         &self,
         owner_id: Uuid,
