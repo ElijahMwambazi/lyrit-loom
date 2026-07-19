@@ -752,6 +752,52 @@ input:hover {
   text-transform: uppercase;
 }
 
+.transcript-edit-cue.has-error {
+  border-color: #874c43;
+}
+
+.cue-bound-controls {
+  display: grid;
+  grid-template-columns: 84px minmax(80px, 1fr) 84px minmax(80px, 1fr) auto;
+  align-items: end;
+  gap: 7px;
+  border-bottom: 1px solid #282c33;
+  padding-bottom: 9px;
+}
+
+.cue-bound-controls label {
+  display: grid;
+  gap: 4px;
+}
+
+.cue-bound-controls label > span {
+  color: #777b84;
+  font-size: 0.61rem;
+}
+
+.cue-bound-controls input[type="number"] {
+  min-width: 0;
+  border: 1px solid #363b44;
+  border-radius: 4px;
+  padding: 7px;
+  background: #15181d;
+  color: #d7d9de;
+  font: inherit;
+  font-size: 0.7rem;
+}
+
+.cue-bound-controls input[type="range"] {
+  width: 100%;
+  margin-bottom: 7px;
+  accent-color: #d6ad4c;
+}
+
+.cue-structure-button {
+  border-color: #4b4434 !important;
+  color: #d8bd82 !important;
+  white-space: nowrap;
+}
+
 .transcript-edit-word {
   display: grid;
   grid-template-columns: minmax(100px, 1fr) 82px 82px auto;
@@ -762,6 +808,10 @@ input:hover {
 .transcript-edit-word.is-active {
   border-left: 2px solid #4da3ff;
   padding-left: 6px;
+}
+
+.transcript-edit-word.has-error input {
+  border-color: #874c43;
 }
 
 .transcript-edit-word label {
@@ -810,6 +860,39 @@ input:hover {
   color: #e3e8ee;
 }
 
+.editor-keyboard-hint {
+  margin: 0;
+  color: #696f79;
+  font-size: 0.61rem;
+}
+
+.timeline-validation {
+  border: 1px solid #75443d;
+  border-radius: 5px;
+  padding: 9px 10px;
+  background: #261b1a;
+  color: #e4a99e;
+  font-size: 0.66rem;
+}
+
+.timeline-validation strong {
+  color: #f0b7ac;
+}
+
+.timeline-validation ul {
+  display: grid;
+  gap: 3px;
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.conflict-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .transcript-editor-actions {
   position: sticky;
   bottom: 0;
@@ -831,6 +914,14 @@ input:hover {
   }
 
   .transport-rate {
+    grid-column: 1 / -1;
+  }
+
+  .cue-bound-controls {
+    grid-template-columns: 80px 1fr;
+  }
+
+  .cue-bound-controls .cue-structure-button {
     grid-column: 1 / -1;
   }
 

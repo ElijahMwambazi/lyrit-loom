@@ -77,13 +77,15 @@ Verified through the production web proxy and Compose worker on 2026-07-19. Repe
 
 - [x] Add waveform, transport controls, and synchronized word selection.
 - [x] Add accessible word text editing and direct/±50 ms timing controls.
-- [ ] Add cue-bound editing, split, and merge operations.
+- [x] Add cue-bound editing, split, and merge operations.
 - [x] Save immutable revisions with optimistic concurrency and conflict recovery.
-- [ ] Provide a keyboard-accessible transcript editing workflow.
+- [x] Provide a keyboard-accessible transcript editing workflow.
 
 First editor slice verified through the production web proxy on 2026-07-19. Revision 1 remained unchanged after revision 2 became active; stale, missing-precondition, and invalid-timeline saves returned `412`, `428`, and `422` respectively.
 
 WaveSurfer playback is now connected to the accessible transcript and working-copy editor. Word markers, the playhead, review buttons, and focused text fields share one selection; custom controls provide play/pause, ±5-second seeking, speed selection, a position slider, and focus-scoped keyboard transport.
+
+Structural editing now includes exact and draggable cue bounds, deterministic split/merge commands, local timeline validation, Alt+arrow word nudging, and Ctrl/Cmd+S saving. Invalid drafts cannot be submitted. A stale save preserves the working copy and offers JSON export before the user explicitly reloads the latest server revision.
 
 ## Upcoming
 

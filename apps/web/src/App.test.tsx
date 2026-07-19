@@ -326,6 +326,7 @@ describe("App", () => {
       })),
     };
     let transcriptReady = false;
+    let saveAttempts = 0;
     vi.mocked(fetch).mockImplementation(
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const { url, method } = requestDetails(input, init);
@@ -355,6 +356,22 @@ describe("App", () => {
           expect(request.headers.get("If-Match")).toBe('"transcript-revision-1"');
           const body = (await request.clone().json()) as { cues: typeof transcript.cues };
           expect(body.cues[0]?.words[0]?.text).toBe("Weave revised");
+          expect(body.cues[0]?.words[1]).toMatchObject({
+            start_ms: 550,
+            end_ms: 1150,
+          });
+          saveAttempts += 1;
+          if (saveAttempts === 1) {
+            return json(
+              {
+                type: "about:blank",
+                title: "Transcript revision conflict",
+                status: 412,
+                code: "revision_conflict",
+              },
+              412,
+            );
+          }
           return json(editedTranscript, 200, { ETag: '"transcript-revision-2"' });
         }
         if (url.endsWith(`/projects/${project.id}`) && method === "GET") {
@@ -439,9 +456,42 @@ describe("App", () => {
     ).toHaveClass("confidence-review");
 
     fireEvent.click(screen.getByRole("button", { name: "Edit words" }));
+    const saveRevision = screen.getByRole("button", { name: "Save new revision" });
+    fireEvent.change(screen.getByLabelText("Cue 1 start milliseconds"), {
+      target: { value: "100" },
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Cue 1, word 1 timing must be ordered and inside its cue.",
+    );
+    expect(saveRevision).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Cue 1 start milliseconds"), {
+      target: { value: "0" },
+    });
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+
+    fireEvent.keyDown(screen.getByLabelText("Cue 1 word 2 text"), {
+      key: "ArrowLeft",
+      altKey: true,
+    });
+    expect(screen.getByLabelText("Cue 1 word 2 start milliseconds")).toHaveValue(550);
+    expect(screen.getByLabelText("Cue 1 word 2 end milliseconds")).toHaveValue(1150);
+
+    fireEvent.click(screen.getByRole("button", { name: "Split before" }));
+    expect(screen.getByText("Cue 2")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Merge with cue 1" }));
+    expect(screen.queryByText("Cue 2")).not.toBeInTheDocument();
+
     fireEvent.change(screen.getByLabelText("Cue 1 word 1 text"), {
       target: { value: "Weave revised" },
     });
+    fireEvent.keyDown(screen.getByRole("region", { name: "Transcript editor" }), {
+      key: "s",
+      ctrlKey: true,
+    });
+    expect(await screen.findByText(/Your draft is still intact/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Cue 1 word 1 text")).toHaveValue("Weave revised");
+    expect(screen.getByRole("button", { name: "Export draft JSON" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Reload latest revision" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Save new revision" }));
     expect(await screen.findByText(/Revision 2/)).toBeInTheDocument();
     expect(

@@ -3,6 +3,7 @@ import type { components } from "@lyrit/api-client";
 import {
   type DragEvent,
   type FormEvent,
+  type KeyboardEvent,
   useCallback,
   useEffect,
   useRef,
@@ -13,6 +14,13 @@ import {
   WaveformTimeline,
   type WaveformTimelineHandle,
 } from "./WaveformTimeline";
+import {
+  mergeCueWithPrevious,
+  nudgeWord,
+  setCueBounds,
+  splitCue,
+  validateTimeline,
+} from "./transcriptEditor";
 
 type Readiness = "checking" | "ready" | "unavailable";
 type Project = components["schemas"]["Project"];
@@ -32,6 +40,11 @@ type ProbeJob = {
   phase: string;
   progress: number;
   result?: { message?: string } | null;
+};
+
+type TranscriptSaveFailure = {
+  message: string;
+  conflict: boolean;
 };
 
 const apiBaseUrl = new URL(
@@ -327,7 +340,7 @@ export function App() {
     projectId: string,
     currentTranscript: Transcript,
     cues: Transcript["cues"],
-  ): Promise<string | null> {
+  ): Promise<TranscriptSaveFailure | null> {
     const etag =
       transcriptEtags[projectId] ??
       `"transcript-revision-${currentTranscript.revision}"`;
@@ -346,11 +359,17 @@ export function App() {
       },
     );
     if (response.status === 412) {
-      await loadTranscript(projectId);
-      return "This transcript changed elsewhere. The latest revision has been reloaded.";
+      return {
+        message:
+          "This transcript changed elsewhere. Your draft is still intact; export it or reload the latest revision.",
+        conflict: true,
+      };
     }
     if (error || !data) {
-      return "The transcript revision could not be saved. Check word text and timing.";
+      return {
+        message: "The transcript revision could not be saved. Check word text and timing.",
+        conflict: false,
+      };
     }
     setTranscripts((current) => ({ ...current, [projectId]: data }));
     const nextEtag = response.headers.get("etag");
@@ -525,6 +544,7 @@ export function App() {
                                 cues,
                               )
                             }
+                            onReload={() => loadTranscript(project.id)}
                           />
                         ) : (
                           <div>
@@ -598,7 +618,8 @@ type TranscriptReviewProps = {
   projectName: string;
   audio: Asset;
   transcript: Transcript;
-  onSave: (cues: Transcript["cues"]) => Promise<string | null>;
+  onSave: (cues: Transcript["cues"]) => Promise<TranscriptSaveFailure | null>;
+  onReload: () => Promise<void>;
 };
 
 function TranscriptReview({
@@ -607,6 +628,7 @@ function TranscriptReview({
   audio,
   transcript,
   onSave,
+  onReload,
 }: TranscriptReviewProps) {
   const waveformRef = useRef<WaveformTimelineHandle>(null);
   const [activeWordId, setActiveWordId] = useState<string | null>(null);
@@ -614,6 +636,7 @@ function TranscriptReview({
   const [draftCues, setDraftCues] = useState(() => cloneCues(transcript.cues));
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveConflict, setSaveConflict] = useState(false);
   const words = transcript.cues.flatMap((cue) => cue.words);
   const timelineWords = (editing ? draftCues : transcript.cues).flatMap(
     (cue) => cue.words,
@@ -621,6 +644,7 @@ function TranscriptReview({
 
   useEffect(() => {
     setDraftCues(cloneCues(transcript.cues));
+    setSaveConflict(false);
   }, [transcript]);
 
   function seekToWord(
@@ -643,6 +667,8 @@ function TranscriptReview({
     wordIndex: number,
     changes: Partial<Transcript["cues"][number]["words"][number]>,
   ) {
+    setSaveError(null);
+    setSaveConflict(false);
     setDraftCues((current) =>
       current.map((cue, currentCueIndex) =>
         currentCueIndex === cueIndex
@@ -657,22 +683,72 @@ function TranscriptReview({
     );
   }
 
+  function updateCueBounds(cueId: string, startMs: number, endMs: number) {
+    setSaveError(null);
+    setSaveConflict(false);
+    setDraftCues((current) => setCueBounds(current, cueId, startMs, endMs));
+  }
+
+  function splitAtWord(cueId: string, wordId: string) {
+    setSaveError(null);
+    setSaveConflict(false);
+    setActiveWordId(wordId);
+    setDraftCues((current) => splitCue(current, cueId, wordId));
+  }
+
+  function mergeWithPrevious(cueId: string) {
+    setSaveError(null);
+    setSaveConflict(false);
+    setDraftCues((current) => mergeCueWithPrevious(current, cueId));
+  }
+
+  function nudgeWordTiming(wordId: string, deltaMs: number) {
+    setSaveError(null);
+    setSaveConflict(false);
+    setActiveWordId(wordId);
+    setDraftCues((current) =>
+      nudgeWord(current, wordId, deltaMs, transcript.duration_ms),
+    );
+  }
+
   function cancelEditing() {
     setDraftCues(cloneCues(transcript.cues));
     setSaveError(null);
+    setSaveConflict(false);
     setEditing(false);
   }
 
   async function saveEditing() {
+    if (validationIssues.length > 0) return;
     setSaving(true);
     setSaveError(null);
-    const error = await onSave(draftCues);
+    setSaveConflict(false);
+    const failure = await onSave(draftCues);
     setSaving(false);
-    if (error) setSaveError(error);
-    else setEditing(false);
+    if (failure) {
+      setSaveError(failure.message);
+      setSaveConflict(failure.conflict);
+    } else setEditing(false);
+  }
+
+  async function reloadLatestTranscript() {
+    setSaving(true);
+    await onReload();
+    setSaving(false);
+    setSaveError(null);
+    setSaveConflict(false);
+    setEditing(false);
   }
 
   const dirty = JSON.stringify(draftCues) !== JSON.stringify(transcript.cues);
+  const validationIssues = validateTimeline(draftCues, transcript.duration_ms);
+
+  function handleEditorKeyboard(event: KeyboardEvent<HTMLDivElement>) {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+      event.preventDefault();
+      if (dirty && !saving && validationIssues.length === 0) void saveEditing();
+    }
+  }
 
   return (
     <div className="transcript-review">
@@ -707,14 +783,94 @@ function TranscriptReview({
         onSelectWord={setActiveWordId}
       />
       {editing ? (
-        <div className="transcript-editor" id={`${projectId}-transcript-editor`}>
+        <div
+          className="transcript-editor"
+          id={`${projectId}-transcript-editor`}
+          role="region"
+          aria-label="Transcript editor"
+          onKeyDown={handleEditorKeyboard}
+        >
           {draftCues.map((cue, cueIndex) => (
-            <fieldset className="transcript-edit-cue" key={cue.id}>
+            <fieldset
+              className={`transcript-edit-cue ${validationIssues.some((issue) => issue.cueId === cue.id) ? "has-error" : ""}`}
+              key={cue.id}
+            >
               <legend>Cue {cueIndex + 1}</legend>
+              <div className="cue-bound-controls">
+                <label>
+                  <span>Start ms</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={transcript.duration_ms - 1}
+                    step={10}
+                    value={cue.start_ms}
+                    aria-label={`Cue ${cueIndex + 1} start milliseconds`}
+                    onChange={(event) =>
+                      updateCueBounds(cue.id, Number(event.target.value), cue.end_ms)
+                    }
+                  />
+                </label>
+                <input
+                  type="range"
+                  min={0}
+                  max={transcript.duration_ms - 1}
+                  step={10}
+                  value={Math.max(
+                    0,
+                    Math.min(cue.start_ms, transcript.duration_ms - 1),
+                  )}
+                  aria-label={`Cue ${cueIndex + 1} start boundary`}
+                  onChange={(event) =>
+                    updateCueBounds(cue.id, Number(event.target.value), cue.end_ms)
+                  }
+                />
+                <label>
+                  <span>End ms</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={transcript.duration_ms}
+                    step={10}
+                    value={cue.end_ms}
+                    aria-label={`Cue ${cueIndex + 1} end milliseconds`}
+                    onChange={(event) =>
+                      updateCueBounds(cue.id, cue.start_ms, Number(event.target.value))
+                    }
+                  />
+                </label>
+                <input
+                  type="range"
+                  min={1}
+                  max={transcript.duration_ms}
+                  step={10}
+                  value={Math.max(1, Math.min(cue.end_ms, transcript.duration_ms))}
+                  aria-label={`Cue ${cueIndex + 1} end boundary`}
+                  onChange={(event) =>
+                    updateCueBounds(cue.id, cue.start_ms, Number(event.target.value))
+                  }
+                />
+                {cueIndex > 0 && (
+                  <button
+                    type="button"
+                    className="cue-structure-button"
+                    onClick={() => mergeWithPrevious(cue.id)}
+                  >
+                    Merge with cue {cueIndex}
+                  </button>
+                )}
+              </div>
               {cue.words.map((word, wordIndex) => (
                 <div
-                  className={`transcript-edit-word ${activeWordId === word.id ? "is-active" : ""}`}
+                  className={`transcript-edit-word ${activeWordId === word.id ? "is-active" : ""} ${validationIssues.some((issue) => issue.wordId === word.id) ? "has-error" : ""}`}
                   key={word.id}
+                  onKeyDown={(event) => {
+                    if (!event.altKey) return;
+                    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                      event.preventDefault();
+                      nudgeWordTiming(word.id, event.key === "ArrowLeft" ? -50 : 50);
+                    }
+                  }}
                 >
                   <label>
                     <span>Word {wordIndex + 1}</span>
@@ -764,37 +920,70 @@ function TranscriptReview({
                   >
                     <button
                       type="button"
-                      onClick={() =>
-                        updateWord(cueIndex, wordIndex, {
-                          start_ms: Math.max(0, word.start_ms - 50),
-                          end_ms: Math.max(1, word.end_ms - 50),
-                        })
-                      }
+                      onClick={() => nudgeWordTiming(word.id, -50)}
                     >
                       −50 ms
                     </button>
                     <button
                       type="button"
-                      onClick={() =>
-                        updateWord(cueIndex, wordIndex, {
-                          start_ms: word.start_ms + 50,
-                          end_ms: word.end_ms + 50,
-                        })
-                      }
+                      onClick={() => nudgeWordTiming(word.id, 50)}
                     >
                       +50 ms
                     </button>
+                    {wordIndex > 0 && (
+                      <button
+                        type="button"
+                        className="cue-structure-button"
+                        onClick={() => splitAtWord(cue.id, word.id)}
+                      >
+                        Split before
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
             </fieldset>
           ))}
+          <p className="editor-keyboard-hint">
+            Alt + arrow nudges the focused word by 50 ms. Ctrl/Cmd + S saves a valid draft.
+          </p>
+          {validationIssues.length > 0 && (
+            <div className="timeline-validation" role="alert">
+              <strong>Resolve {validationIssues.length} timeline issue{validationIssues.length === 1 ? "" : "s"}</strong>
+              <ul>
+                {validationIssues.slice(0, 5).map((issue, index) => (
+                  <li key={`${issue.cueId ?? "transcript"}-${issue.wordId ?? index}-${index}`}>
+                    {issue.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {saveError && <p className="upload-error">{saveError}</p>}
+          {saveConflict && (
+            <div className="conflict-actions">
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => downloadTranscriptDraft(projectName, transcript, draftCues)}
+              >
+                Export draft JSON
+              </button>
+              <button
+                type="button"
+                className="text-button"
+                disabled={saving}
+                onClick={() => void reloadLatestTranscript()}
+              >
+                Reload latest revision
+              </button>
+            </div>
+          )}
           <div className="transcript-editor-actions">
             <button
               type="button"
               className="button-primary"
-              disabled={!dirty || saving}
+              disabled={!dirty || saving || validationIssues.length > 0}
               onClick={() => void saveEditing()}
             >
               {saving ? "Saving…" : "Save new revision"}
@@ -842,6 +1031,33 @@ function cloneCues(cues: Transcript["cues"]): Transcript["cues"] {
     ...cue,
     words: cue.words.map((word) => ({ ...word })),
   }));
+}
+
+function downloadTranscriptDraft(
+  projectName: string,
+  transcript: Transcript,
+  cues: Transcript["cues"],
+) {
+  const document = {
+    base_revision: transcript.revision,
+    language: transcript.language,
+    duration_ms: transcript.duration_ms,
+    cues,
+  };
+  const blob = new Blob([JSON.stringify(document, null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = window.document.createElement("a");
+  const safeProjectName = projectName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  anchor.href = url;
+  anchor.download = `${safeProjectName || "lyrit-loom"}-transcript-draft.json`;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 type AssetUploadProps = {
