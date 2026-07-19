@@ -258,4 +258,133 @@ describe("App", () => {
       await screen.findByText("Durable job queue is operational"),
     ).toBeInTheDocument();
   });
+
+  it("queues transcription and displays the completed word transcript", async () => {
+    const audioAsset = {
+      id: "00000000-0000-4000-8000-000000000020",
+      project_id: project.id,
+      kind: "audio",
+      original_filename: "demo-song.mp3",
+      media_type: "audio/mpeg",
+      bytes: 2048,
+      sha256: "a".repeat(64),
+      duration_ms: 62_000,
+      width: null,
+      height: null,
+      created_at: "2026-07-17T10:01:00Z",
+    };
+    const projectWithAudio = { ...project, audio_asset: audioAsset };
+    const transcript = {
+      id: "00000000-0000-4000-8000-000000000040",
+      project_id: project.id,
+      audio_asset_id: audioAsset.id,
+      revision: 1,
+      source: "whisper",
+      language: "en",
+      duration_ms: 4200,
+      cues: [
+        {
+          id: "00000000-0000-4000-8000-000000000041",
+          start_ms: 0,
+          end_ms: 1200,
+          words: [
+            {
+              id: "00000000-0000-4000-8000-000000000042",
+              text: "Weave",
+              start_ms: 0,
+              end_ms: 500,
+              confidence: 0.99,
+            },
+            {
+              id: "00000000-0000-4000-8000-000000000043",
+              text: "motion",
+              start_ms: 600,
+              end_ms: 1200,
+              confidence: 0.98,
+            },
+          ],
+        },
+      ],
+      transcriber: {
+        engine: "fake",
+        model: "configured-default",
+        revision: "milestone-2-fake",
+        language_probability: 1,
+      },
+      created_at: "2026-07-19T10:00:00Z",
+    };
+    let transcriptReady = false;
+    vi.mocked(fetch).mockImplementation(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const { url, method } = requestDetails(input, init);
+        if (url.endsWith("/health/ready")) {
+          return json({ status: "ready", checks: [] });
+        }
+        if (url.endsWith(`/projects/${project.id}/transcriptions`) && method === "POST") {
+          return json({
+            job: {
+              id: "00000000-0000-4000-8000-000000000030",
+              status: "queued",
+              phase: "queued",
+              progress: 0,
+            },
+            job_url: `/api/v1/jobs/00000000-0000-4000-8000-000000000030`,
+            events_url: `/api/v1/jobs/00000000-0000-4000-8000-000000000030/events`,
+          }, 202);
+        }
+        if (url.endsWith(`/projects/${project.id}/transcript`) && method === "GET") {
+          return transcriptReady ? json(transcript) : json({}, 404);
+        }
+        if (url.endsWith(`/projects/${project.id}`) && method === "GET") {
+          return json({ ...projectWithAudio, active_transcript_revision: 1 });
+        }
+        if (url.endsWith("/projects?limit=20") && method === "GET") {
+          return json({ items: [projectWithAudio], next_cursor: null });
+        }
+        throw new Error(`Unexpected request: ${method} ${url}`);
+      },
+    );
+
+    class EventSourceMock {
+      static instance: EventSourceMock;
+      listeners = new Map<string, EventListener>();
+      onerror: ((event: Event) => void) | null = null;
+
+      constructor(public readonly url: string) {
+        EventSourceMock.instance = this;
+      }
+
+      addEventListener(type: string, listener: EventListener) {
+        this.listeners.set(type, listener);
+      }
+
+      close() {}
+
+      emit(type: string, data: object) {
+        this.listeners.get(type)?.(
+          new MessageEvent(type, { data: JSON.stringify(data) }),
+        );
+      }
+    }
+    vi.stubGlobal("EventSource", EventSourceMock);
+
+    render(<App />);
+    const button = await screen.findByRole("button", { name: "Transcribe audio" });
+    fireEvent.click(button);
+    await waitFor(() => expect(EventSourceMock.instance).toBeDefined());
+    EventSourceMock.instance.emit("progress", {
+      status: "running",
+      phase: "transcribing",
+      progress: 0.65,
+    });
+    expect(await screen.findByText("transcribing · 65%")).toBeInTheDocument();
+
+    transcriptReady = true;
+    EventSourceMock.instance.emit("succeeded", {
+      status: "succeeded",
+      phase: "complete",
+      progress: 1,
+    });
+    expect(await screen.findByText("Weave motion")).toBeInTheDocument();
+  });
 });

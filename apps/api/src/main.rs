@@ -4,9 +4,11 @@ mod state;
 
 use std::{env, error::Error, net::SocketAddr};
 
-use lyrit_application::{AssetService, JobService, ProjectService};
+use lyrit_application::{AssetService, JobService, ProjectService, TranscriptService};
 use lyrit_media::{FfprobeMediaInspector, LocalArtifactStore};
-use lyrit_persistence::{PgAssetRepository, PgJobRepository, PgProjectRepository};
+use lyrit_persistence::{
+    PgAssetRepository, PgJobRepository, PgProjectRepository, PgTranscriptRepository,
+};
 use sqlx::postgres::PgPoolOptions;
 use state::AppState;
 use tokio::net::TcpListener;
@@ -41,6 +43,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     sqlx::migrate!("../../db/migrations").run(&pool).await?;
 
     let jobs = JobService::new(PgJobRepository::new(pool.clone()));
+    let transcripts = TranscriptService::new(PgTranscriptRepository::new(pool.clone()));
     let project_repository = PgProjectRepository::new(pool.clone());
     let projects = ProjectService::new(project_repository.clone());
     let assets = AssetService::new(
@@ -55,6 +58,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         jobs,
         projects,
         assets,
+        transcripts,
         max_upload_bytes: usize::try_from(max_upload_bytes)?,
         enable_dev_routes,
     };

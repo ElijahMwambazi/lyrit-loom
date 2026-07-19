@@ -30,6 +30,12 @@ impl From<ApplicationError> for ApiError {
                 title: "Invalid request",
                 detail,
             },
+            ApplicationError::Conflict(detail) => Self {
+                status: StatusCode::CONFLICT,
+                code: "conflict",
+                title: "Resource state conflict",
+                detail,
+            },
             ApplicationError::PayloadTooLarge => Self {
                 status: StatusCode::PAYLOAD_TOO_LARGE,
                 code: "payload_too_large",

@@ -1,4 +1,7 @@
-use lyrit_domain::{Asset, BackgroundFit, Job, JobEvent, Project, VideoSettings};
+use lyrit_domain::{
+    Asset, BackgroundFit, Job, JobEvent, Project, TranscriberMetadata, TranscriptCue,
+    TranscriptRevision, VideoSettings,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -147,6 +150,66 @@ pub struct AssetResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_url: Option<String>,
     pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StartTranscriptionRequest {
+    #[serde(default = "default_language")]
+    pub language: String,
+    #[serde(default = "default_model")]
+    pub model: String,
+    pub initial_prompt: Option<String>,
+    #[serde(default = "default_true")]
+    pub vad_enabled: bool,
+}
+
+fn default_language() -> String {
+    "auto".to_owned()
+}
+
+fn default_model() -> String {
+    "configured-default".to_owned()
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Serialize)]
+pub struct JobAcceptedResponse {
+    pub job: JobResponse,
+    pub job_url: String,
+    pub events_url: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TranscriptRevisionResponse {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub revision: i32,
+    pub source: String,
+    pub language: String,
+    pub duration_ms: i64,
+    pub cues: Vec<TranscriptCue>,
+    pub transcriber: Option<TranscriberMetadata>,
+    pub created_at: String,
+}
+
+impl From<TranscriptRevision> for TranscriptRevisionResponse {
+    fn from(transcript: TranscriptRevision) -> Self {
+        Self {
+            id: transcript.id,
+            project_id: transcript.project_id,
+            revision: transcript.revision,
+            source: transcript.source,
+            language: transcript.language,
+            duration_ms: transcript.duration_ms,
+            cues: transcript.cues,
+            transcriber: transcript.transcriber,
+            created_at: format_time(transcript.created_at),
+        }
+    }
 }
 
 impl From<Asset> for AssetResponse {

@@ -81,7 +81,21 @@ The probe demonstrates the real queue mechanics:
 4. Browser receives events through SSE and may recover state from `GET /jobs/{id}`.
 5. Worker commits the terminal result and releases the lease.
 
-The probe is scaffolding, not a production job type. Milestone 2 replaces it with the transcription handler while preserving the queue path.
+The probe is scaffolding, not a production job type. The Milestone 2 transcription handler uses the same queue path and remains model-free by default.
+
+## Deterministic transcription
+
+Set `WORKER_QUEUES=system_probe,transcribe` when running the worker on the host. A transcription request snapshots the project's active audio asset and returns `202 Accepted`; FFmpeg normalization and Python execution happen only in the durable worker. Host workers also need these commands on `PATH` unless their variables point elsewhere:
+
+```text
+WORKSPACE_ROOT=./workspaces
+FFMPEG_PATH=ffmpeg
+PYTHON_PATH=python3
+PYTHONPATH=apps/transcriber/src
+LYRIT_TRANSCRIBER_MODE=fake
+```
+
+The Compose worker supplies these values and shares the source artifact volume with the API. Its per-job workspace is removed after success or failure. To exercise the feature, upload audio in the web workspace and select **Transcribe audio**. Progress arrives over the existing job SSE endpoint; the final revision is available at `GET /api/v1/projects/{project_id}/transcript` with a revision ETag.
 
 ## Project API
 

@@ -270,6 +270,46 @@ pub struct Asset {
     pub created_at: OffsetDateTime,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimedWord {
+    pub id: Uuid,
+    pub text: String,
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub confidence: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriptCue {
+    pub id: Uuid,
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub words: Vec<TimedWord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriberMetadata {
+    pub engine: String,
+    pub model: String,
+    pub model_revision: String,
+    pub language_probability: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct TranscriptRevision {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub audio_asset_id: Uuid,
+    pub job_id: Option<Uuid>,
+    pub revision: i32,
+    pub source: String,
+    pub language: String,
+    pub duration_ms: i64,
+    pub cues: Vec<TranscriptCue>,
+    pub transcriber: Option<TranscriberMetadata>,
+    pub created_at: OffsetDateTime,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

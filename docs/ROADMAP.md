@@ -60,18 +60,20 @@ The next vertical slice should remain deterministic and model-free first. It wil
 - [x] Define the versioned Rust-to-Python transcriber contract and fake adapter.
 - [x] Provide durable job claiming, progress events, leases, and worker recovery primitives.
 - [x] Persist the active source-audio pointer and probed duration needed by the job.
-- [ ] Add a transcription job type and API command that enqueues work without running it in the HTTP request.
-- [ ] Snapshot the active audio asset when the transcription job is created.
-- [ ] Normalize source audio to mono 16 kHz PCM WAV with FFmpeg inside the worker workspace.
-- [ ] Report normalization and transcription phases through durable job events.
-- [ ] Invoke the fake transcriber through the versioned JSON contract.
-- [ ] Validate transcriber output and reject invalid or unordered word timestamps.
-- [ ] Persist immutable transcript revisions and their runtime metadata.
-- [ ] Add the active transcript endpoint with ETag support.
+- [x] Add a transcription job type and API command that enqueues work without running it in the HTTP request.
+- [x] Snapshot the active audio asset when the transcription job is created.
+- [x] Normalize source audio to mono 16 kHz PCM WAV with FFmpeg inside the worker workspace.
+- [x] Report normalization and transcription phases through durable job events.
+- [x] Invoke the fake transcriber through the versioned JSON contract.
+- [x] Validate transcriber output and reject invalid or unordered word timestamps.
+- [x] Persist immutable transcript revisions and their runtime metadata.
+- [x] Add the active transcript endpoint with ETag support.
 - [ ] Add transcript review, confidence hints, and audio playback to the web workspace.
-- [ ] Cover queue-to-transcript completion with deterministic integration and UI tests.
+- [x] Cover queue-to-transcript completion with deterministic integration and UI tests.
 
-Milestone 2 is complete only when a project’s active audio can produce a schema-valid transcript revision end to end without requiring a Whisper model download.
+Vertical slice verified through the production web proxy and Compose worker on 2026-07-19. Repeating an enqueue with the same idempotency key returned the original job; durable events covered queued, normalization, transcription, validation, finalization, and success; the active revision returned a revision ETag and six ordered fake words.
+
+The model-free queue-to-transcript path is complete. Milestone 2 remains current until the web workspace adds audio playback and confidence-aware transcript review.
 
 ## Upcoming
 

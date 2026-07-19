@@ -429,6 +429,37 @@ input:hover {
   background: #20252c;
 }
 
+.transcription-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  border-top: 1px solid #292c33;
+  padding-top: 16px;
+}
+
+.transcription-panel strong {
+  color: #d8d8d8;
+  font-size: 0.78rem;
+}
+
+.transcription-panel p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 5px 0 0;
+  color: #7f828b;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.transcription-panel .upload-error {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
 .upload-progress {
   height: 4px;
   margin-top: 9px;
@@ -546,6 +577,10 @@ input:hover {
   }
 
   .asset-slots {
+    grid-template-columns: 1fr;
+  }
+
+  .transcription-panel {
     grid-template-columns: 1fr;
   }
 

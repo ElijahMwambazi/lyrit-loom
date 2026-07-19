@@ -9,6 +9,7 @@ publish.workspace = true
 lyrit-application = { path = "../../crates/application" }
 lyrit-domain = { path = "../../crates/domain" }
 lyrit-persistence = { path = "../../crates/persistence" }
+serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
 tokio.workspace = true

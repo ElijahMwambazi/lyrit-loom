@@ -947,6 +947,7 @@ dependencies = [
  "lyrit-application",
  "lyrit-domain",
  "lyrit-persistence",
+ "serde",
  "serde_json",
  "sqlx",
  "tokio",

@@ -8,10 +8,11 @@ use axum::{
     routing::{get, post},
 };
 use lyrit_api_model::{
-    AssetResponse, CreateProjectRequest, HealthResponse, JobEventResponse, JobResponse,
-    ProjectPageResponse, ProjectResponse, ReadinessCheck, ReadinessResponse, UpdateProjectRequest,
+    AssetResponse, CreateProjectRequest, HealthResponse, JobAcceptedResponse, JobEventResponse,
+    JobResponse, ProjectPageResponse, ProjectResponse, ReadinessCheck, ReadinessResponse,
+    StartTranscriptionRequest, TranscriptRevisionResponse, UpdateProjectRequest,
 };
-use lyrit_application::{ApplicationError, ProjectChanges, UploadAsset};
+use lyrit_application::{ApplicationError, ProjectChanges, StartTranscription, UploadAsset};
 use lyrit_domain::{AssetKind, Project};
 use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
@@ -32,6 +33,14 @@ pub fn router(state: AppState) -> Router {
         .route("/health/ready", get(readiness))
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/{project_id}/assets", post(upload_project_asset))
+        .route(
+            "/projects/{project_id}/transcriptions",
+            post(start_transcription),
+        )
+        .route(
+            "/projects/{project_id}/transcript",
+            get(get_active_transcript),
+        )
         .route(
             "/projects/{project_id}",
             get(get_project).patch(update_project),
@@ -250,6 +259,74 @@ async fn enqueue_probe(
 ) -> Result<(StatusCode, Json<JobResponse>), ApiError> {
     let job = state.jobs.enqueue_probe("development-smoke-test").await?;
     Ok((StatusCode::CREATED, Json(job.into())))
+}
+
+async fn start_transcription(
+    State(state): State<AppState>,
+    Path(project_id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(request): Json<StartTranscriptionRequest>,
+) -> Result<
+    (
+        StatusCode,
+        [(HeaderName, String); 2],
+        Json<JobAcceptedResponse>,
+    ),
+    ApiError,
+> {
+    state.projects.get(LOCAL_OWNER_ID, project_id).await?;
+    let idempotency_key = headers
+        .get("idempotency-key")
+        .ok_or_else(|| {
+            ApplicationError::Validation("Idempotency-Key header is required".to_owned())
+        })?
+        .to_str()
+        .map_err(|_| ApplicationError::Validation("Idempotency-Key must be valid text".to_owned()))?
+        .to_owned();
+    let job = state
+        .transcripts
+        .start(StartTranscription {
+            owner_id: LOCAL_OWNER_ID,
+            project_id,
+            idempotency_key,
+            language: request.language,
+            model: request.model,
+            initial_prompt: request.initial_prompt,
+            vad_enabled: request.vad_enabled,
+        })
+        .await?;
+    let job_url = format!("/api/v1/jobs/{}", job.id);
+    let events_url = format!("/api/v1/jobs/{}/events", job.id);
+    Ok((
+        StatusCode::ACCEPTED,
+        [
+            (header::LOCATION, job_url.clone()),
+            (header::RETRY_AFTER, "2".to_owned()),
+        ],
+        Json(JobAcceptedResponse {
+            job: job.into(),
+            job_url,
+            events_url,
+        }),
+    ))
+}
+
+async fn get_active_transcript(
+    State(state): State<AppState>,
+    Path(project_id): Path<Uuid>,
+) -> Result<(HeaderMap, Json<TranscriptRevisionResponse>), ApiError> {
+    let transcript = state
+        .transcripts
+        .get_active(LOCAL_OWNER_ID, project_id)
+        .await?;
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::ETAG,
+        format!("\"transcript-revision-{}\"", transcript.revision)
+            .parse()
+            .expect("revision ETag should be valid"),
+    );
+    Ok((headers, Json(transcript.into())))
 }
 
 async fn get_job(

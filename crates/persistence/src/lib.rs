@@ -2,12 +2,12 @@ use std::str::FromStr;
 
 use async_trait::async_trait;
 use lyrit_application::{
-    ApplicationError, AssetRepository, JobRepository, NewAsset, NewProject, ProjectChanges,
-    ProjectRepository,
+    ActivateTranscript, ApplicationError, AssetRepository, JobRepository, NewAsset, NewProject,
+    ProjectChanges, ProjectRepository, StartTranscription, TranscriptRepository,
 };
 use lyrit_domain::{
     Asset, AssetKind, BackgroundFit, Job, JobError, JobEvent, JobStatus, Project, ProjectStatus,
-    VideoSettings,
+    TranscriberMetadata, TranscriptCue, TranscriptRevision, VideoSettings,
 };
 use serde_json::Value;
 use sqlx::{PgPool, Postgres, Transaction};
@@ -347,6 +347,241 @@ impl AssetRepository for PgAssetRepository {
             .map_err(repository_error)?;
         transaction.commit().await.map_err(repository_error)?;
         Asset::try_from(record).map(Some)
+    }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct TranscriptRecord {
+    id: Uuid,
+    project_id: Uuid,
+    audio_asset_id: Uuid,
+    job_id: Option<Uuid>,
+    revision: i32,
+    source: String,
+    language: String,
+    duration_ms: i64,
+    cues: Value,
+    transcriber: Option<Value>,
+    created_at: OffsetDateTime,
+}
+
+impl TryFrom<TranscriptRecord> for TranscriptRevision {
+    type Error = ApplicationError;
+
+    fn try_from(record: TranscriptRecord) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: record.id,
+            project_id: record.project_id,
+            audio_asset_id: record.audio_asset_id,
+            job_id: record.job_id,
+            revision: record.revision,
+            source: record.source,
+            language: record.language,
+            duration_ms: record.duration_ms,
+            cues: serde_json::from_value::<Vec<TranscriptCue>>(record.cues)
+                .map_err(|error| ApplicationError::InvalidData(error.to_string()))?,
+            transcriber: record
+                .transcriber
+                .map(serde_json::from_value::<TranscriberMetadata>)
+                .transpose()
+                .map_err(|error| ApplicationError::InvalidData(error.to_string()))?,
+            created_at: record.created_at,
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct PgTranscriptRepository {
+    pool: PgPool,
+}
+
+impl PgTranscriptRepository {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+const TRANSCRIPT_COLUMNS: &str = r#"
+    id, project_id, audio_asset_id, job_id, revision, source, language,
+    duration_ms, cues, transcriber, created_at
+"#;
+
+#[async_trait]
+impl TranscriptRepository for PgTranscriptRepository {
+    async fn enqueue(&self, request: StartTranscription) -> Result<Option<Job>, ApplicationError> {
+        let mut transaction = self.pool.begin().await.map_err(repository_error)?;
+        let source = sqlx::query_as::<_, (Uuid, String, i64)>(
+            r#"
+            SELECT asset.id, asset.storage_key, asset.duration_ms
+            FROM projects AS project
+            JOIN assets AS asset ON asset.id = project.audio_asset_id
+            WHERE project.id = $1 AND project.owner_id = $2
+            FOR UPDATE OF project
+            "#,
+        )
+        .bind(request.project_id)
+        .bind(request.owner_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(repository_error)?;
+        let Some((audio_asset_id, storage_key, duration_ms)) = source else {
+            transaction.rollback().await.map_err(repository_error)?;
+            return Ok(None);
+        };
+
+        if let Some(record) = sqlx::query_as::<_, JobRecord>(
+            r#"
+            SELECT id, kind, status, phase, progress, attempt, max_attempts,
+                   payload, result, error, lease_owner, created_at, started_at, finished_at
+            FROM jobs
+            WHERE owner_id = $1 AND project_id = $2 AND kind = 'transcribe'
+              AND idempotency_key = $3
+            "#,
+        )
+        .bind(request.owner_id)
+        .bind(request.project_id)
+        .bind(&request.idempotency_key)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(repository_error)?
+        {
+            transaction.commit().await.map_err(repository_error)?;
+            return Job::try_from(record).map(Some);
+        }
+
+        let payload = serde_json::json!({
+            "project_id": request.project_id,
+            "audio_asset_id": audio_asset_id,
+            "source_storage_key": storage_key,
+            "source_duration_ms": duration_ms,
+            "language": request.language,
+            "model": request.model,
+            "initial_prompt": request.initial_prompt,
+            "vad_enabled": request.vad_enabled
+        });
+        let record = sqlx::query_as::<_, JobRecord>(
+            r#"
+            INSERT INTO jobs (
+                id, kind, status, phase, progress, payload, max_attempts,
+                owner_id, project_id, idempotency_key
+            )
+            VALUES ($1, 'transcribe', 'queued', 'queued', 0, $2, 3, $3, $4, $5)
+            RETURNING id, kind, status, phase, progress, attempt, max_attempts,
+                      payload, result, error, lease_owner, created_at, started_at, finished_at
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(payload)
+        .bind(request.owner_id)
+        .bind(request.project_id)
+        .bind(request.idempotency_key)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(repository_error)?;
+        let job = Job::try_from(record)?;
+        append_event(&mut transaction, &job, Some("Transcription queued")).await?;
+        transaction.commit().await.map_err(repository_error)?;
+        Ok(Some(job))
+    }
+
+    async fn get_active(
+        &self,
+        owner_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Option<TranscriptRevision>, ApplicationError> {
+        let query = format!(
+            r#"
+            SELECT {TRANSCRIPT_COLUMNS}
+            FROM transcript_revisions
+            WHERE project_id = $2
+              AND revision = (
+                  SELECT active_transcript_revision
+                  FROM projects
+                  WHERE owner_id = $1 AND id = $2
+              )
+            "#
+        );
+        sqlx::query_as::<_, TranscriptRecord>(&query)
+            .bind(owner_id)
+            .bind(project_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(repository_error)?
+            .map(TranscriptRevision::try_from)
+            .transpose()
+    }
+
+    async fn activate(
+        &self,
+        transcript: ActivateTranscript,
+    ) -> Result<TranscriptRevision, ApplicationError> {
+        let mut transaction = self.pool.begin().await.map_err(repository_error)?;
+        let existing_query =
+            format!("SELECT {TRANSCRIPT_COLUMNS} FROM transcript_revisions WHERE job_id = $1");
+        if let Some(existing) = sqlx::query_as::<_, TranscriptRecord>(&existing_query)
+            .bind(transcript.job_id)
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(repository_error)?
+        {
+            transaction.commit().await.map_err(repository_error)?;
+            return TranscriptRevision::try_from(existing);
+        }
+
+        let active_audio = sqlx::query_scalar::<_, Option<Uuid>>(
+            "SELECT audio_asset_id FROM projects WHERE id = $1 FOR UPDATE",
+        )
+        .bind(transcript.project_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(repository_error)?
+        .flatten();
+        if active_audio != Some(transcript.audio_asset_id) {
+            transaction.rollback().await.map_err(repository_error)?;
+            return Err(ApplicationError::Conflict(
+                "active audio changed while transcription was running".to_owned(),
+            ));
+        }
+        let revision = sqlx::query_scalar::<_, i32>(
+            "SELECT COALESCE(MAX(revision), 0) + 1 FROM transcript_revisions WHERE project_id = $1",
+        )
+        .bind(transcript.project_id)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(repository_error)?;
+        let query = format!(
+            r#"
+            INSERT INTO transcript_revisions (
+                id, project_id, audio_asset_id, job_id, revision, source, language,
+                duration_ms, cues, transcriber
+            )
+            VALUES ($1, $2, $3, $4, $5, 'whisper', $6, $7, $8, $9)
+            RETURNING {TRANSCRIPT_COLUMNS}
+            "#
+        );
+        let record = sqlx::query_as::<_, TranscriptRecord>(&query)
+            .bind(Uuid::new_v4())
+            .bind(transcript.project_id)
+            .bind(transcript.audio_asset_id)
+            .bind(transcript.job_id)
+            .bind(revision)
+            .bind(transcript.language)
+            .bind(transcript.duration_ms)
+            .bind(serde_json::to_value(transcript.cues).map_err(invalid_data_error)?)
+            .bind(serde_json::to_value(transcript.transcriber).map_err(invalid_data_error)?)
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(repository_error)?;
+        sqlx::query(
+            "UPDATE projects SET active_transcript_revision = $2, updated_at = now() WHERE id = $1",
+        )
+        .bind(transcript.project_id)
+        .bind(revision)
+        .execute(&mut *transaction)
+        .await
+        .map_err(repository_error)?;
+        transaction.commit().await.map_err(repository_error)?;
+        TranscriptRevision::try_from(record)
     }
 }
 
@@ -694,4 +929,8 @@ async fn append_event(
 
 fn repository_error(error: sqlx::Error) -> ApplicationError {
     ApplicationError::Repository(error.to_string())
+}
+
+fn invalid_data_error(error: serde_json::Error) -> ApplicationError {
+    ApplicationError::InvalidData(error.to_string())
 }

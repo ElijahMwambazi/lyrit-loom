@@ -14,7 +14,7 @@ Requirements: Docker with the Compose plugin.
 docker compose up --build -d
 ```
 
-Open [http://localhost:3000](http://localhost:3000), create a project, then choose or drop an audio file and background image into its source cards. Upload progress is visible in the browser; the API streams, hashes, probes, stores, and activates supported media. The Milestone 0 queue check remains available under **Foundation diagnostics**.
+Open [http://localhost:3000](http://localhost:3000), create a project, then choose or drop an audio file and background image into its source cards. Upload progress is visible in the browser; the API streams, hashes, probes, stores, and activates supported media. Once audio is ready, **Transcribe audio** runs normalization and the deterministic fake transcriber in the durable worker, then displays the word-timed result. The Milestone 0 queue check remains available under **Foundation diagnostics**.
 
 From another terminal, the same check is available as:
 
@@ -93,6 +93,6 @@ See [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) for contract workflow, fake tra
 - [`docs/DELIVERY_GUIDE.md`](docs/DELIVERY_GUIDE.md) — milestones and implementation notes for Rust, React, Whisper, ASS, and FFmpeg.
 - [`contracts/openapi.yaml`](contracts/openapi.yaml) — OpenAPI 3.1 source of truth.
 
-The next vertical slice is Milestone 2: normalize active audio and enqueue fake-transcriber work through the existing durable worker path.
+The current Milestone 2 vertical slice normalizes active audio and runs fake-transcriber work through the existing durable worker path. The next task is the transcript review experience: audio playback and confidence-aware word inspection before editing is introduced in Milestone 3.
 
 This repository is proprietary and is not licensed for public distribution.

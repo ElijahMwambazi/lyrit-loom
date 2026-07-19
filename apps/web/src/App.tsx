@@ -13,6 +13,7 @@ type Readiness = "checking" | "ready" | "unavailable";
 type Project = components["schemas"]["Project"];
 type Asset = components["schemas"]["Asset"];
 type SourceAssetKind = components["schemas"]["SourceAssetKind"];
+type Transcript = components["schemas"]["TranscriptRevision"];
 
 type UploadState = {
   progress: number;
@@ -47,9 +48,13 @@ export function App() {
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
   const [uploads, setUploads] = useState<Record<string, UploadState>>({});
+  const [transcriptionJobs, setTranscriptionJobs] = useState<Record<string, ProbeJob>>({});
+  const [transcripts, setTranscripts] = useState<Record<string, Transcript>>({});
+  const [transcriptionErrors, setTranscriptionErrors] = useState<Record<string, string>>({});
   const [probe, setProbe] = useState<ProbeJob | null>(null);
   const [probeError, setProbeError] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const transcriptionSourcesRef = useRef<Map<string, EventSource>>(new Map());
 
   const checkReadiness = useCallback(async () => {
     setReadiness("checking");
@@ -67,6 +72,9 @@ export function App() {
       setProjectsError("Projects could not be loaded. Check the local API.");
     } else {
       setProjects(data.items);
+      data.items
+        .filter((project) => project.active_transcript_revision)
+        .forEach((project) => void loadTranscript(project.id));
     }
     setProjectsLoading(false);
   }, []);
@@ -74,7 +82,10 @@ export function App() {
   useEffect(() => {
     void checkReadiness();
     void loadProjects();
-    return () => eventSourceRef.current?.close();
+    return () => {
+      eventSourceRef.current?.close();
+      transcriptionSourcesRef.current.forEach((source) => source.close());
+    };
   }, [checkReadiness, loadProjects]);
 
   async function createProject(event: FormEvent<HTMLFormElement>) {
@@ -152,25 +163,29 @@ export function App() {
     request.send(form);
   }
 
-  async function refreshProject(projectId: string, uploadStateKey: string) {
+  async function refreshProject(projectId: string, uploadStateKey?: string) {
     const { data, error } = await api.GET("/projects/{project_id}", {
       params: { path: { project_id: projectId } },
     });
     if (error || !data) {
-      setUploadFailure(
-        uploadStateKey,
-        "The asset was stored, but the project could not be refreshed.",
-      );
+      if (uploadStateKey) {
+        setUploadFailure(
+          uploadStateKey,
+          "The asset was stored, but the project could not be refreshed.",
+        );
+      }
       return;
     }
     setProjects((current) =>
       current.map((project) => (project.id === data.id ? data : project)),
     );
-    setUploads((current) => {
-      const next = { ...current };
-      delete next[uploadStateKey];
-      return next;
-    });
+    if (uploadStateKey) {
+      setUploads((current) => {
+        const next = { ...current };
+        delete next[uploadStateKey];
+        return next;
+      });
+    }
   }
 
   function setUploadFailure(key: string, error: string) {
@@ -225,6 +240,70 @@ export function App() {
       setProbeError("The worker reported a failed probe.");
     });
     events.onerror = () => events.close();
+  }
+
+  async function startTranscription(project: Project) {
+    setTranscriptionErrors((current) => ({ ...current, [project.id]: "" }));
+    const { data, error } = await api.POST("/projects/{project_id}/transcriptions", {
+      params: {
+        path: { project_id: project.id },
+        header: { "Idempotency-Key": crypto.randomUUID() },
+      },
+      body: {
+        language: "auto",
+        model: "configured-default",
+        vad_enabled: true,
+      },
+    });
+    if (error || !data) {
+      setTranscriptionErrors((current) => ({
+        ...current,
+        [project.id]: "Transcription could not be queued.",
+      }));
+      return;
+    }
+    setTranscriptionJobs((current) => ({ ...current, [project.id]: data.job }));
+    transcriptionSourcesRef.current.get(project.id)?.close();
+    const events = new EventSource(data.events_url);
+    transcriptionSourcesRef.current.set(project.id, events);
+    events.addEventListener("progress", (message) => {
+      const update = JSON.parse((message as MessageEvent<string>).data) as Pick<
+        ProbeJob,
+        "status" | "phase" | "progress"
+      >;
+      setTranscriptionJobs((current) => {
+        const active = current[project.id];
+        if (!active) return current;
+        return { ...current, [project.id]: { ...active, ...update } };
+      });
+    });
+    events.addEventListener("succeeded", () => {
+      events.close();
+      void loadTranscript(project.id);
+      void refreshProject(project.id);
+    });
+    events.addEventListener("failed", () => {
+      events.close();
+      setTranscriptionErrors((current) => ({
+        ...current,
+        [project.id]: "The worker could not complete transcription.",
+      }));
+    });
+    events.onerror = () => events.close();
+  }
+
+  async function loadTranscript(projectId: string) {
+    const { data, error } = await api.GET("/projects/{project_id}/transcript", {
+      params: { path: { project_id: projectId } },
+    });
+    if (!error && data) {
+      setTranscripts((current) => ({ ...current, [projectId]: data }));
+      setTranscriptionJobs((current) => {
+        const next = { ...current };
+        delete next[projectId];
+        return next;
+      });
+    }
   }
 
   const progress = Math.round((probe?.progress ?? 0) * 100);
@@ -370,6 +449,33 @@ export function App() {
                         }
                       />
                     </div>
+                    {project.audio_asset && (
+                      <div className="transcription-panel">
+                        <div>
+                          <strong>Word transcript</strong>
+                          <p>
+                            {transcripts[project.id]
+                              ? transcriptText(transcripts[project.id]!)
+                              : transcriptionJobs[project.id]
+                                ? `${transcriptionJobs[project.id]!.phase.replaceAll("_", " ")} · ${Math.round(transcriptionJobs[project.id]!.progress * 100)}%`
+                                : project.active_transcript_revision
+                                  ? "Transcript revision ready"
+                                  : "Generate editable word-level timing from the active audio."}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className="button-secondary"
+                          disabled={Boolean(transcriptionJobs[project.id])}
+                          onClick={() => void startTranscription(project)}
+                        >
+                          {project.active_transcript_revision ? "Transcribe again" : "Transcribe audio"}
+                        </button>
+                        {transcriptionErrors[project.id] && (
+                          <small className="upload-error">{transcriptionErrors[project.id]}</small>
+                        )}
+                      </div>
+                    )}
                   </>
                 )}
               </article>
@@ -511,6 +617,12 @@ function assetDescription(asset: Asset) {
 function formatBytes(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function transcriptText(transcript: Transcript) {
+  return transcript.cues
+    .flatMap((cue) => cue.words.map((word) => word.text))
+    .join(" ");
 }
 
 function uploadError(request: XMLHttpRequest) {

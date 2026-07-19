@@ -378,8 +378,8 @@ export interface components {
             readonly confidence?: number | null;
         };
         TranscriberMetadata: {
-            /** @constant */
-            engine: "faster-whisper";
+            /** @enum {string} */
+            engine: "fake" | "faster-whisper";
             model: string;
             model_revision: string;
             language_probability: number;

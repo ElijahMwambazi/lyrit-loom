@@ -949,7 +949,7 @@ components:
       properties:
         engine:
           type: string
-          const: faster-whisper
+          enum: [fake, faster-whisper]
         model:
           type: string
         model_revision:

@@ -3,7 +3,10 @@ use std::pin::Pin;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures_util::Stream;
-use lyrit_domain::{Asset, AssetKind, Job, JobError, JobEvent, Project, VideoSettings};
+use lyrit_domain::{
+    Asset, AssetKind, Job, JobError, JobEvent, Project, TranscriberMetadata, TranscriptCue,
+    TranscriptRevision, VideoSettings,
+};
 use serde_json::{Value, json};
 use thiserror::Error;
 use uuid::Uuid;
@@ -14,6 +17,8 @@ pub enum ApplicationError {
     NotFound,
     #[error("invalid request: {0}")]
     Validation(String),
+    #[error("resource state conflict: {0}")]
+    Conflict(String),
     #[error("upload exceeds the configured size limit")]
     PayloadTooLarge,
     #[error("unsupported media: {0}")]
@@ -80,6 +85,165 @@ pub struct NewAsset {
     pub width: Option<i32>,
     pub height: Option<i32>,
     pub tool_metadata: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct StartTranscription {
+    pub owner_id: Uuid,
+    pub project_id: Uuid,
+    pub idempotency_key: String,
+    pub language: String,
+    pub model: String,
+    pub initial_prompt: Option<String>,
+    pub vad_enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ActivateTranscript {
+    pub job_id: Uuid,
+    pub project_id: Uuid,
+    pub audio_asset_id: Uuid,
+    pub language: String,
+    pub duration_ms: i64,
+    pub cues: Vec<TranscriptCue>,
+    pub transcriber: TranscriberMetadata,
+}
+
+#[async_trait]
+pub trait TranscriptRepository: Clone + Send + Sync + 'static {
+    async fn enqueue(&self, request: StartTranscription) -> Result<Option<Job>, ApplicationError>;
+    async fn get_active(
+        &self,
+        owner_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Option<TranscriptRevision>, ApplicationError>;
+    async fn activate(
+        &self,
+        transcript: ActivateTranscript,
+    ) -> Result<TranscriptRevision, ApplicationError>;
+}
+
+#[derive(Clone)]
+pub struct TranscriptService<R> {
+    repository: R,
+}
+
+impl<R> TranscriptService<R>
+where
+    R: TranscriptRepository,
+{
+    pub fn new(repository: R) -> Self {
+        Self { repository }
+    }
+
+    pub async fn start(&self, mut request: StartTranscription) -> Result<Job, ApplicationError> {
+        request.idempotency_key = request.idempotency_key.trim().to_owned();
+        request.language = request.language.trim().to_owned();
+        request.model = request.model.trim().to_owned();
+        if request.idempotency_key.is_empty() || request.idempotency_key.len() > 128 {
+            return Err(ApplicationError::Validation(
+                "Idempotency-Key must contain between 1 and 128 characters".to_owned(),
+            ));
+        }
+        if request.language.is_empty() || request.language.len() > 64 {
+            return Err(ApplicationError::Validation(
+                "language must contain between 1 and 64 characters".to_owned(),
+            ));
+        }
+        if request.model != "configured-default" {
+            return Err(ApplicationError::Validation(
+                "model must be the configured-default profile".to_owned(),
+            ));
+        }
+        if request
+            .initial_prompt
+            .as_ref()
+            .is_some_and(|value| value.chars().count() > 1000)
+        {
+            return Err(ApplicationError::Validation(
+                "initial_prompt must not exceed 1000 characters".to_owned(),
+            ));
+        }
+        self.repository
+            .enqueue(request)
+            .await?
+            .ok_or(ApplicationError::Conflict(
+                "project does not have an active audio asset".to_owned(),
+            ))
+    }
+
+    pub async fn get_active(
+        &self,
+        owner_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<TranscriptRevision, ApplicationError> {
+        self.repository
+            .get_active(owner_id, project_id)
+            .await?
+            .ok_or(ApplicationError::NotFound)
+    }
+
+    pub async fn activate(
+        &self,
+        transcript: ActivateTranscript,
+    ) -> Result<TranscriptRevision, ApplicationError> {
+        validate_transcript(&transcript)?;
+        self.repository.activate(transcript).await
+    }
+}
+
+fn validate_transcript(transcript: &ActivateTranscript) -> Result<(), ApplicationError> {
+    if transcript.duration_ms <= 0
+        || transcript.cues.is_empty()
+        || transcript.language.trim().is_empty()
+        || transcript.language.len() > 64
+    {
+        return Err(ApplicationError::Validation(
+            "transcript language, duration, and cues must be present".to_owned(),
+        ));
+    }
+    if !matches!(
+        transcript.transcriber.engine.as_str(),
+        "fake" | "faster-whisper"
+    ) || transcript.transcriber.model.trim().is_empty()
+        || transcript.transcriber.model_revision.trim().is_empty()
+        || !(0.0..=1.0).contains(&transcript.transcriber.language_probability)
+    {
+        return Err(ApplicationError::Validation(
+            "transcriber metadata does not satisfy the contract".to_owned(),
+        ));
+    }
+    let mut previous_end = 0;
+    for cue in &transcript.cues {
+        if cue.words.is_empty()
+            || cue.start_ms < previous_end
+            || cue.end_ms <= cue.start_ms
+            || cue.end_ms > transcript.duration_ms
+        {
+            return Err(ApplicationError::Validation(
+                "transcript cues must be ordered, non-empty, and within duration".to_owned(),
+            ));
+        }
+        let mut word_end = cue.start_ms;
+        for word in &cue.words {
+            if word.text.trim().is_empty()
+                || word.start_ms < word_end
+                || word.end_ms <= word.start_ms
+                || word.start_ms < cue.start_ms
+                || word.end_ms > cue.end_ms
+                || word
+                    .confidence
+                    .is_some_and(|value| !(0.0..=1.0).contains(&value))
+            {
+                return Err(ApplicationError::Validation(
+                    "transcript words must be ordered and contained by their cue".to_owned(),
+                ));
+            }
+            word_end = word.end_ms;
+        }
+        previous_end = cue.end_ms;
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -540,11 +704,14 @@ where
 
 #[cfg(test)]
 mod tests {
-    use lyrit_domain::{AssetKind, BackgroundFit, VideoSettings};
+    use lyrit_domain::{
+        AssetKind, BackgroundFit, TimedWord, TranscriberMetadata, TranscriptCue, VideoSettings,
+    };
+    use uuid::Uuid;
 
     use super::{
-        ApplicationError, validate_declared_media_type, validate_filename, validate_name,
-        validate_video_settings,
+        ActivateTranscript, ApplicationError, validate_declared_media_type, validate_filename,
+        validate_name, validate_transcript, validate_video_settings,
     };
 
     #[test]
@@ -596,5 +763,57 @@ mod tests {
             validate_declared_media_type(AssetKind::Background, Some("audio/mpeg")),
             Err(ApplicationError::UnsupportedMedia(_))
         ));
+    }
+
+    #[test]
+    fn transcript_timeline_rejects_unordered_words() {
+        let mut transcript = valid_transcript();
+        transcript.cues[0].words[1].start_ms = 400;
+        assert!(matches!(
+            validate_transcript(&transcript),
+            Err(ApplicationError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn transcript_timeline_accepts_ordered_words() {
+        assert!(validate_transcript(&valid_transcript()).is_ok());
+    }
+
+    fn valid_transcript() -> ActivateTranscript {
+        ActivateTranscript {
+            job_id: Uuid::new_v4(),
+            project_id: Uuid::new_v4(),
+            audio_asset_id: Uuid::new_v4(),
+            language: "en".to_owned(),
+            duration_ms: 2_000,
+            cues: vec![TranscriptCue {
+                id: Uuid::new_v4(),
+                start_ms: 100,
+                end_ms: 1_500,
+                words: vec![
+                    TimedWord {
+                        id: Uuid::new_v4(),
+                        text: "Weave".to_owned(),
+                        start_ms: 100,
+                        end_ms: 500,
+                        confidence: Some(0.99),
+                    },
+                    TimedWord {
+                        id: Uuid::new_v4(),
+                        text: "motion".to_owned(),
+                        start_ms: 600,
+                        end_ms: 1_500,
+                        confidence: Some(0.98),
+                    },
+                ],
+            }],
+            transcriber: TranscriberMetadata {
+                engine: "fake".to_owned(),
+                model: "configured-default".to_owned(),
+                model_revision: "test".to_owned(),
+                language_probability: 1.0,
+            },
+        }
     }
 }

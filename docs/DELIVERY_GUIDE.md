@@ -63,7 +63,7 @@ Build:
 
 - FFmpeg normalization to mono 16 kHz PCM WAV for ASR;
 - versioned Rust-to-Python JSON contract;
-- `faster-whisper` adapter with word timestamps and configurable VAD;
+- deterministic fake adapter first; add `faster-whisper` with word timestamps and configurable VAD only after the model-free vertical slice is stable;
 - transcription job handler, progress phases, timeout, cancellation, and error mapping;
 - post-processing that converts segments into cues and validates timeline invariants;
 - active transcript GET endpoint with ETag;
