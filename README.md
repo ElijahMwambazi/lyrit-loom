@@ -89,6 +89,7 @@ See [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) for contract workflow, fake tra
 ## Architecture and delivery
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — boundaries, component ownership, data model, state machines, and API/process contracts.
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — completed work, the current focus, and upcoming product milestones.
 - [`docs/DELIVERY_GUIDE.md`](docs/DELIVERY_GUIDE.md) — milestones and implementation notes for Rust, React, Whisper, ASS, and FFmpeg.
 - [`contracts/openapi.yaml`](contracts/openapi.yaml) — OpenAPI 3.1 source of truth.
 

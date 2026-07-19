@@ -2,6 +2,8 @@
 
 This guide converts the architecture into implementation order. Each milestone ends in a working product slice and has explicit exit criteria. Build the smallest preset first, then add expressive motion after the media pipeline is trustworthy.
 
+For the concise checklist of completed, current, and upcoming work, see [`ROADMAP.md`](ROADMAP.md).
+
 ## 1. Development milestones
 
 ### Milestone 0 — Foundation and executable contract
