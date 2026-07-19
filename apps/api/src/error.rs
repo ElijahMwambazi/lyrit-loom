@@ -36,6 +36,24 @@ impl From<ApplicationError> for ApiError {
                 title: "Resource state conflict",
                 detail,
             },
+            ApplicationError::RevisionConflict => Self {
+                status: StatusCode::PRECONDITION_FAILED,
+                code: "revision_conflict",
+                title: "Transcript revision conflict",
+                detail: "The transcript changed after this editor loaded it.".to_owned(),
+            },
+            ApplicationError::PreconditionRequired => Self {
+                status: StatusCode::PRECONDITION_REQUIRED,
+                code: "precondition_required",
+                title: "Precondition required",
+                detail: "If-Match is required to save a transcript revision.".to_owned(),
+            },
+            ApplicationError::UnprocessableEntity(detail) => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                code: "unprocessable_entity",
+                title: "Unprocessable entity",
+                detail,
+            },
             ApplicationError::PayloadTooLarge => Self {
                 status: StatusCode::PAYLOAD_TOO_LARGE,
                 code: "payload_too_large",

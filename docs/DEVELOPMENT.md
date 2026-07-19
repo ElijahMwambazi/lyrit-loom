@@ -99,6 +99,8 @@ The Compose worker supplies these values and shares the source artifact volume w
 
 Project asset responses include an owner-scoped `content_url`. The content endpoint streams rather than buffering the object, supports one standard byte range for browser seeking, and returns `416` for invalid or multiple ranges. The transcript review player uses this URL; selecting a timed word seeks playback to its start. Words below 85% confidence are visually marked for review, but confidence remains a hint rather than an acceptance gate.
 
+Transcript edits use `PUT /api/v1/projects/{project_id}/transcript` with the exact strong ETag returned by `GET`. Every successful save inserts a new immutable revision with `source=edited`; it never updates the prior JSON in place. Missing preconditions return `428`, stale revisions return `412`, and invalid word ordering or bounds return `422`. The web editor reloads the latest revision after a conflict and exposes direct millisecond inputs plus ±50 ms timing nudges.
+
 ## Project API
 
 The first Milestone 1 slice implements `POST /projects`, `GET /projects`, `GET /projects/{project_id}`, and `PATCH /projects/{project_id}` from the OpenAPI contract. Project names are trimmed and limited to 120 characters; video settings enforce supported dimensions and frame rates in the application layer. PostgreSQL owns the durable records and timestamps.

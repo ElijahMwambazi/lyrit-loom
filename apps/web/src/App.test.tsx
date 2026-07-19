@@ -21,10 +21,10 @@ const project = {
   updated_at: "2026-07-17T10:00:00Z",
 };
 
-function json(body: object, status = 200) {
+function json(body: object, status = 200, headers: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...headers },
   });
 }
 
@@ -313,6 +313,17 @@ describe("App", () => {
       },
       created_at: "2026-07-19T10:00:00Z",
     };
+    const editedTranscript = {
+      ...transcript,
+      revision: 2,
+      source: "edited",
+      cues: transcript.cues.map((cue) => ({
+        ...cue,
+        words: cue.words.map((word) =>
+          word.text === "Weave" ? { ...word, text: "Weave revised" } : word,
+        ),
+      })),
+    };
     let transcriptReady = false;
     vi.mocked(fetch).mockImplementation(
       async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -333,7 +344,17 @@ describe("App", () => {
           }, 202);
         }
         if (url.endsWith(`/projects/${project.id}/transcript`) && method === "GET") {
-          return transcriptReady ? json(transcript) : json({}, 404);
+          return transcriptReady
+            ? json(transcript, 200, { ETag: '"transcript-revision-1"' })
+            : json({}, 404);
+        }
+        if (url.endsWith(`/projects/${project.id}/transcript`) && method === "PUT") {
+          expect(input).toBeInstanceOf(Request);
+          const request = input as Request;
+          expect(request.headers.get("If-Match")).toBe('"transcript-revision-1"');
+          const body = (await request.clone().json()) as { cues: typeof transcript.cues };
+          expect(body.cues[0]?.words[0]?.text).toBe("Weave revised");
+          return json(editedTranscript, 200, { ETag: '"transcript-revision-2"' });
         }
         if (url.endsWith(`/projects/${project.id}`) && method === "GET") {
           return json({ ...projectWithAudio, active_transcript_revision: 1 });
@@ -395,5 +416,15 @@ describe("App", () => {
         name: "motion, 72% confidence, review suggested, starts at 0:00",
       }),
     ).toHaveClass("confidence-review");
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit words" }));
+    fireEvent.change(screen.getByLabelText("Cue 1 word 1 text"), {
+      target: { value: "Weave revised" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save new revision" }));
+    expect(await screen.findByText(/Revision 2/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Weave revised, 99% confidence/ }),
+    ).toBeInTheDocument();
   });
 });

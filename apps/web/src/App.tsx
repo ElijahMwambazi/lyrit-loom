@@ -50,6 +50,7 @@ export function App() {
   const [uploads, setUploads] = useState<Record<string, UploadState>>({});
   const [transcriptionJobs, setTranscriptionJobs] = useState<Record<string, ProbeJob>>({});
   const [transcripts, setTranscripts] = useState<Record<string, Transcript>>({});
+  const [transcriptEtags, setTranscriptEtags] = useState<Record<string, string>>({});
   const [transcriptionErrors, setTranscriptionErrors] = useState<Record<string, string>>({});
   const [probe, setProbe] = useState<ProbeJob | null>(null);
   const [probeError, setProbeError] = useState<string | null>(null);
@@ -300,17 +301,65 @@ export function App() {
   }
 
   async function loadTranscript(projectId: string) {
-    const { data, error } = await api.GET("/projects/{project_id}/transcript", {
+    const { data, error, response } = await api.GET("/projects/{project_id}/transcript", {
       params: { path: { project_id: projectId } },
     });
     if (!error && data) {
       setTranscripts((current) => ({ ...current, [projectId]: data }));
+      const etag = response.headers.get("etag");
+      if (etag) {
+        setTranscriptEtags((current) => ({ ...current, [projectId]: etag }));
+      }
       setTranscriptionJobs((current) => {
         const next = { ...current };
         delete next[projectId];
         return next;
       });
     }
+  }
+
+  async function saveTranscript(
+    projectId: string,
+    currentTranscript: Transcript,
+    cues: Transcript["cues"],
+  ): Promise<string | null> {
+    const etag =
+      transcriptEtags[projectId] ??
+      `"transcript-revision-${currentTranscript.revision}"`;
+    const { data, error, response } = await api.PUT(
+      "/projects/{project_id}/transcript",
+      {
+        params: {
+          path: { project_id: projectId },
+          header: { "If-Match": etag },
+        },
+        body: {
+          language: currentTranscript.language,
+          duration_ms: currentTranscript.duration_ms,
+          cues,
+        },
+      },
+    );
+    if (response.status === 412) {
+      await loadTranscript(projectId);
+      return "This transcript changed elsewhere. The latest revision has been reloaded.";
+    }
+    if (error || !data) {
+      return "The transcript revision could not be saved. Check word text and timing.";
+    }
+    setTranscripts((current) => ({ ...current, [projectId]: data }));
+    const nextEtag = response.headers.get("etag");
+    if (nextEtag) {
+      setTranscriptEtags((current) => ({ ...current, [projectId]: nextEtag }));
+    }
+    setProjects((current) =>
+      current.map((project) =>
+        project.id === projectId
+          ? { ...project, active_transcript_revision: data.revision }
+          : project,
+      ),
+    );
+    return null;
   }
 
   const progress = Math.round((probe?.progress ?? 0) * 100);
@@ -460,9 +509,17 @@ export function App() {
                       <div className={`transcription-panel ${transcripts[project.id] ? "has-transcript" : ""}`}>
                         {transcripts[project.id] ? (
                           <TranscriptReview
+                            projectId={project.id}
                             projectName={project.name}
                             audio={project.audio_asset}
                             transcript={transcripts[project.id]!}
+                            onSave={(cues) =>
+                              saveTranscript(
+                                project.id,
+                                transcripts[project.id]!,
+                                cues,
+                              )
+                            }
                           />
                         ) : (
                           <div>
@@ -532,15 +589,31 @@ export function App() {
 }
 
 type TranscriptReviewProps = {
+  projectId: string;
   projectName: string;
   audio: Asset;
   transcript: Transcript;
+  onSave: (cues: Transcript["cues"]) => Promise<string | null>;
 };
 
-function TranscriptReview({ projectName, audio, transcript }: TranscriptReviewProps) {
+function TranscriptReview({
+  projectId,
+  projectName,
+  audio,
+  transcript,
+  onSave,
+}: TranscriptReviewProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [activeWordId, setActiveWordId] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draftCues, setDraftCues] = useState(() => cloneCues(transcript.cues));
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const words = transcript.cues.flatMap((cue) => cue.words);
+
+  useEffect(() => {
+    setDraftCues(cloneCues(transcript.cues));
+  }, [transcript]);
 
   function seekToWord(word: Transcript["cues"][number]["words"][number]) {
     const player = audioRef.current;
@@ -558,6 +631,42 @@ function TranscriptReview({ projectName, audio, transcript }: TranscriptReviewPr
     setActiveWordId(active?.id ?? null);
   }
 
+  function updateWord(
+    cueIndex: number,
+    wordIndex: number,
+    changes: Partial<Transcript["cues"][number]["words"][number]>,
+  ) {
+    setDraftCues((current) =>
+      current.map((cue, currentCueIndex) =>
+        currentCueIndex === cueIndex
+          ? {
+              ...cue,
+              words: cue.words.map((word, currentWordIndex) =>
+                currentWordIndex === wordIndex ? { ...word, ...changes } : word,
+              ),
+            }
+          : cue,
+      ),
+    );
+  }
+
+  function cancelEditing() {
+    setDraftCues(cloneCues(transcript.cues));
+    setSaveError(null);
+    setEditing(false);
+  }
+
+  async function saveEditing() {
+    setSaving(true);
+    setSaveError(null);
+    const error = await onSave(draftCues);
+    setSaving(false);
+    if (error) setSaveError(error);
+    else setEditing(false);
+  }
+
+  const dirty = JSON.stringify(draftCues) !== JSON.stringify(transcript.cues);
+
   return (
     <div className="transcript-review">
       <div className="transcript-review-heading">
@@ -567,7 +676,18 @@ function TranscriptReview({ projectName, audio, transcript }: TranscriptReviewPr
             Revision {transcript.revision} · {words.length} words · {transcript.language.toUpperCase()}
           </p>
         </div>
-        <span>{formatDuration(transcript.duration_ms)}</span>
+        <div className="transcript-review-actions">
+          <span>{formatDuration(transcript.duration_ms)}</span>
+          <button
+            type="button"
+            className="text-button"
+            aria-controls={`${projectId}-transcript-editor`}
+            aria-expanded={editing}
+            onClick={() => (editing ? cancelEditing() : setEditing(true))}
+          >
+            {editing ? "Cancel editing" : "Edit words"}
+          </button>
+        </div>
       </div>
       <audio
         ref={audioRef}
@@ -579,33 +699,138 @@ function TranscriptReview({ projectName, audio, transcript }: TranscriptReviewPr
         onTimeUpdate={syncActiveWord}
         onSeeked={syncActiveWord}
       />
-      <div className="confidence-legend" aria-label="Word confidence legend">
-        <span><i className="confidence-high" />High</span>
-        <span><i className="confidence-review" />Review</span>
-      </div>
-      <div className="transcript-cues" aria-label="Timed transcript words">
-        {transcript.cues.map((cue) => (
-          <div className="transcript-cue" key={cue.id}>
-            {cue.words.map((word) => {
-              const confidence = confidenceLevel(word.confidence);
-              return (
-                <button
-                  type="button"
-                  key={word.id}
-                  className={`transcript-word confidence-${confidence.level} ${activeWordId === word.id ? "is-active" : ""}`}
-                  title={`${formatDuration(word.start_ms)} · ${confidence.label}`}
-                  aria-label={`${word.text}, ${confidence.label}, starts at ${formatDuration(word.start_ms)}`}
-                  onClick={() => seekToWord(word)}
-                >
-                  {word.text}
-                </button>
-              );
-            })}
+      {editing ? (
+        <div className="transcript-editor" id={`${projectId}-transcript-editor`}>
+          {draftCues.map((cue, cueIndex) => (
+            <fieldset className="transcript-edit-cue" key={cue.id}>
+              <legend>Cue {cueIndex + 1}</legend>
+              {cue.words.map((word, wordIndex) => (
+                <div className="transcript-edit-word" key={word.id}>
+                  <label>
+                    <span>Word {wordIndex + 1}</span>
+                    <input
+                      aria-label={`Cue ${cueIndex + 1} word ${wordIndex + 1} text`}
+                      value={word.text}
+                      maxLength={200}
+                      onChange={(event) =>
+                        updateWord(cueIndex, wordIndex, { text: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>Start ms</span>
+                    <input
+                      aria-label={`Cue ${cueIndex + 1} word ${wordIndex + 1} start milliseconds`}
+                      type="number"
+                      min={0}
+                      step={10}
+                      value={word.start_ms}
+                      onChange={(event) =>
+                        updateWord(cueIndex, wordIndex, {
+                          start_ms: Number(event.target.value),
+                        })
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>End ms</span>
+                    <input
+                      aria-label={`Cue ${cueIndex + 1} word ${wordIndex + 1} end milliseconds`}
+                      type="number"
+                      min={1}
+                      step={10}
+                      value={word.end_ms}
+                      onChange={(event) =>
+                        updateWord(cueIndex, wordIndex, {
+                          end_ms: Number(event.target.value),
+                        })
+                      }
+                    />
+                  </label>
+                  <div
+                    className="timing-nudges"
+                    aria-label={`Cue ${cueIndex + 1} word ${wordIndex + 1} timing nudges`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateWord(cueIndex, wordIndex, {
+                          start_ms: Math.max(0, word.start_ms - 50),
+                          end_ms: Math.max(1, word.end_ms - 50),
+                        })
+                      }
+                    >
+                      −50 ms
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateWord(cueIndex, wordIndex, {
+                          start_ms: word.start_ms + 50,
+                          end_ms: word.end_ms + 50,
+                        })
+                      }
+                    >
+                      +50 ms
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </fieldset>
+          ))}
+          {saveError && <p className="upload-error">{saveError}</p>}
+          <div className="transcript-editor-actions">
+            <button
+              type="button"
+              className="button-primary"
+              disabled={!dirty || saving}
+              onClick={() => void saveEditing()}
+            >
+              {saving ? "Saving…" : "Save new revision"}
+            </button>
+            <button type="button" className="text-button" onClick={cancelEditing}>
+              Cancel
+            </button>
           </div>
-        ))}
-      </div>
+        </div>
+      ) : (
+        <>
+          <div className="confidence-legend" aria-label="Word confidence legend">
+            <span><i className="confidence-high" />High</span>
+            <span><i className="confidence-review" />Review</span>
+          </div>
+          <div className="transcript-cues" aria-label="Timed transcript words">
+            {transcript.cues.map((cue) => (
+              <div className="transcript-cue" key={cue.id}>
+                {cue.words.map((word) => {
+                  const confidence = confidenceLevel(word.confidence);
+                  return (
+                    <button
+                      type="button"
+                      key={word.id}
+                      className={`transcript-word confidence-${confidence.level} ${activeWordId === word.id ? "is-active" : ""}`}
+                      title={`${formatDuration(word.start_ms)} · ${confidence.label}`}
+                      aria-label={`${word.text}, ${confidence.label}, starts at ${formatDuration(word.start_ms)}`}
+                      onClick={() => seekToWord(word)}
+                    >
+                      {word.text}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
+}
+
+function cloneCues(cues: Transcript["cues"]): Transcript["cues"] {
+  return cues.map((cue) => ({
+    ...cue,
+    words: cue.words.map((word) => ({ ...word })),
+  }));
 }
 
 type AssetUploadProps = {

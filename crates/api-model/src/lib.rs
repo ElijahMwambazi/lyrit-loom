@@ -196,6 +196,14 @@ pub struct TranscriptRevisionResponse {
     pub created_at: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReplaceTranscriptRequest {
+    pub language: String,
+    pub duration_ms: i64,
+    pub cues: Vec<TranscriptCue>,
+}
+
 impl From<TranscriptRevision> for TranscriptRevisionResponse {
     fn from(transcript: TranscriptRevision) -> Self {
         Self {

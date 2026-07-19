@@ -93,6 +93,6 @@ See [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) for contract workflow, fake tra
 - [`docs/DELIVERY_GUIDE.md`](docs/DELIVERY_GUIDE.md) — milestones and implementation notes for Rust, React, Whisper, ASS, and FFmpeg.
 - [`contracts/openapi.yaml`](contracts/openapi.yaml) — OpenAPI 3.1 source of truth.
 
-Milestone 2 now provides the complete model-free transcription and review path: durable normalization, fake transcription, source-audio playback, and confidence-aware timed words. The next vertical slice is Milestone 3: editable transcript revisions with optimistic concurrency.
+Milestone 2 provides the complete model-free transcription and review path. Milestone 3 is underway with accessible word text/timing controls and immutable saves protected by optimistic concurrency; waveform and structural cue editing come next.
 
 This repository is proprietary and is not licensed for public distribution.

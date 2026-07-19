@@ -3,7 +3,7 @@ use std::str::FromStr;
 use async_trait::async_trait;
 use lyrit_application::{
     ActivateTranscript, ApplicationError, AssetRepository, JobRepository, NewAsset, NewProject,
-    ProjectChanges, ProjectRepository, StartTranscription, TranscriptRepository,
+    ProjectChanges, ProjectRepository, ReplaceTranscript, StartTranscription, TranscriptRepository,
 };
 use lyrit_domain::{
     Asset, AssetKind, BackgroundFit, Job, JobError, JobEvent, JobStatus, Project, ProjectStatus,
@@ -605,6 +605,95 @@ impl TranscriptRepository for PgTranscriptRepository {
         .map_err(repository_error)?;
         transaction.commit().await.map_err(repository_error)?;
         TranscriptRevision::try_from(record)
+    }
+
+    async fn replace(
+        &self,
+        transcript: ReplaceTranscript,
+    ) -> Result<Option<TranscriptRevision>, ApplicationError> {
+        let mut transaction = self.pool.begin().await.map_err(repository_error)?;
+        let project_state = sqlx::query_as::<_, (Option<Uuid>, Option<i32>)>(
+            r#"
+            SELECT audio_asset_id, active_transcript_revision
+            FROM projects
+            WHERE id = $1 AND owner_id = $2
+            FOR UPDATE
+            "#,
+        )
+        .bind(transcript.project_id)
+        .bind(transcript.owner_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(repository_error)?;
+        let Some((audio_asset_id, active_revision)) = project_state else {
+            transaction.rollback().await.map_err(repository_error)?;
+            return Ok(None);
+        };
+        if active_revision != Some(transcript.expected_revision) {
+            transaction.rollback().await.map_err(repository_error)?;
+            return Err(ApplicationError::RevisionConflict);
+        }
+        let audio_asset_id = audio_asset_id.ok_or_else(|| {
+            ApplicationError::InvalidData("active transcript project has no audio".to_owned())
+        })?;
+        let base_query = format!(
+            "SELECT {TRANSCRIPT_COLUMNS} FROM transcript_revisions WHERE project_id = $1 AND revision = $2"
+        );
+        let base = sqlx::query_as::<_, TranscriptRecord>(&base_query)
+            .bind(transcript.project_id)
+            .bind(transcript.expected_revision)
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(repository_error)?
+            .ok_or_else(|| {
+                ApplicationError::InvalidData(
+                    "active transcript revision does not exist".to_owned(),
+                )
+            })?;
+        let next_revision = transcript.expected_revision.checked_add(1).ok_or_else(|| {
+            ApplicationError::InvalidData("transcript revision overflow".to_owned())
+        })?;
+        let query = format!(
+            r#"
+            INSERT INTO transcript_revisions (
+                id, project_id, audio_asset_id, job_id, revision, source, language,
+                duration_ms, cues, transcriber
+            )
+            VALUES ($1, $2, $3, NULL, $4, 'edited', $5, $6, $7, $8)
+            RETURNING {TRANSCRIPT_COLUMNS}
+            "#
+        );
+        let record = sqlx::query_as::<_, TranscriptRecord>(&query)
+            .bind(Uuid::new_v4())
+            .bind(transcript.project_id)
+            .bind(audio_asset_id)
+            .bind(next_revision)
+            .bind(transcript.language)
+            .bind(transcript.duration_ms)
+            .bind(serde_json::to_value(transcript.cues).map_err(invalid_data_error)?)
+            .bind(base.transcriber)
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(repository_error)?;
+        let updated = sqlx::query(
+            r#"
+            UPDATE projects
+            SET active_transcript_revision = $3, updated_at = now()
+            WHERE id = $1 AND active_transcript_revision = $2
+            "#,
+        )
+        .bind(transcript.project_id)
+        .bind(transcript.expected_revision)
+        .bind(next_revision)
+        .execute(&mut *transaction)
+        .await
+        .map_err(repository_error)?;
+        if updated.rows_affected() != 1 {
+            transaction.rollback().await.map_err(repository_error)?;
+            return Err(ApplicationError::RevisionConflict);
+        }
+        transaction.commit().await.map_err(repository_error)?;
+        TranscriptRevision::try_from(record).map(Some)
     }
 }
 

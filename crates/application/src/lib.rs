@@ -19,6 +19,12 @@ pub enum ApplicationError {
     Validation(String),
     #[error("resource state conflict: {0}")]
     Conflict(String),
+    #[error("transcript revision conflict")]
+    RevisionConflict,
+    #[error("If-Match precondition is required")]
+    PreconditionRequired,
+    #[error("unprocessable transcript: {0}")]
+    UnprocessableEntity(String),
     #[error("upload exceeds the configured size limit")]
     PayloadTooLarge,
     #[error("unsupported media: {0}")]
@@ -123,6 +129,16 @@ pub struct ActivateTranscript {
     pub transcriber: TranscriberMetadata,
 }
 
+#[derive(Debug, Clone)]
+pub struct ReplaceTranscript {
+    pub owner_id: Uuid,
+    pub project_id: Uuid,
+    pub expected_revision: i32,
+    pub language: String,
+    pub duration_ms: i64,
+    pub cues: Vec<TranscriptCue>,
+}
+
 #[async_trait]
 pub trait TranscriptRepository: Clone + Send + Sync + 'static {
     async fn enqueue(&self, request: StartTranscription) -> Result<Option<Job>, ApplicationError>;
@@ -135,6 +151,10 @@ pub trait TranscriptRepository: Clone + Send + Sync + 'static {
         &self,
         transcript: ActivateTranscript,
     ) -> Result<TranscriptRevision, ApplicationError>;
+    async fn replace(
+        &self,
+        transcript: ReplaceTranscript,
+    ) -> Result<Option<TranscriptRevision>, ApplicationError>;
 }
 
 #[derive(Clone)]
@@ -204,18 +224,33 @@ where
         validate_transcript(&transcript)?;
         self.repository.activate(transcript).await
     }
+
+    pub async fn replace(
+        &self,
+        transcript: ReplaceTranscript,
+    ) -> Result<TranscriptRevision, ApplicationError> {
+        validate_timeline(
+            &transcript.language,
+            transcript.duration_ms,
+            &transcript.cues,
+        )
+        .map_err(|error| match error {
+            ApplicationError::Validation(detail) => ApplicationError::UnprocessableEntity(detail),
+            other => other,
+        })?;
+        self.repository
+            .replace(transcript)
+            .await?
+            .ok_or(ApplicationError::NotFound)
+    }
 }
 
 fn validate_transcript(transcript: &ActivateTranscript) -> Result<(), ApplicationError> {
-    if transcript.duration_ms <= 0
-        || transcript.cues.is_empty()
-        || transcript.language.trim().is_empty()
-        || transcript.language.len() > 64
-    {
-        return Err(ApplicationError::Validation(
-            "transcript language, duration, and cues must be present".to_owned(),
-        ));
-    }
+    validate_timeline(
+        &transcript.language,
+        transcript.duration_ms,
+        &transcript.cues,
+    )?;
     if !matches!(
         transcript.transcriber.engine.as_str(),
         "fake" | "faster-whisper"
@@ -227,12 +262,25 @@ fn validate_transcript(transcript: &ActivateTranscript) -> Result<(), Applicatio
             "transcriber metadata does not satisfy the contract".to_owned(),
         ));
     }
+    Ok(())
+}
+
+fn validate_timeline(
+    language: &str,
+    duration_ms: i64,
+    cues: &[TranscriptCue],
+) -> Result<(), ApplicationError> {
+    if duration_ms <= 0 || cues.is_empty() || language.trim().is_empty() || language.len() > 64 {
+        return Err(ApplicationError::Validation(
+            "transcript language, duration, and cues must be present".to_owned(),
+        ));
+    }
     let mut previous_end = 0;
-    for cue in &transcript.cues {
+    for cue in cues {
         if cue.words.is_empty()
             || cue.start_ms < previous_end
             || cue.end_ms <= cue.start_ms
-            || cue.end_ms > transcript.duration_ms
+            || cue.end_ms > duration_ms
         {
             return Err(ApplicationError::Validation(
                 "transcript cues must be ordered, non-empty, and within duration".to_owned(),
@@ -241,6 +289,7 @@ fn validate_transcript(transcript: &ActivateTranscript) -> Result<(), Applicatio
         let mut word_end = cue.start_ms;
         for word in &cue.words {
             if word.text.trim().is_empty()
+                || word.text.chars().count() > 200
                 || word.start_ms < word_end
                 || word.end_ms <= word.start_ms
                 || word.start_ms < cue.start_ms

@@ -14,10 +14,11 @@ use axum::{
 use lyrit_api_model::{
     AssetResponse, CreateProjectRequest, HealthResponse, JobAcceptedResponse, JobEventResponse,
     JobResponse, ProjectPageResponse, ProjectResponse, ReadinessCheck, ReadinessResponse,
-    StartTranscriptionRequest, TranscriptRevisionResponse, UpdateProjectRequest,
+    ReplaceTranscriptRequest, StartTranscriptionRequest, TranscriptRevisionResponse,
+    UpdateProjectRequest,
 };
 use lyrit_application::{
-    ApplicationError, ByteRange, ProjectChanges, StartTranscription, UploadAsset,
+    ApplicationError, ByteRange, ProjectChanges, ReplaceTranscript, StartTranscription, UploadAsset,
 };
 use lyrit_domain::{AssetKind, Project};
 use serde::Deserialize;
@@ -45,7 +46,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/projects/{project_id}/transcript",
-            get(get_active_transcript),
+            get(get_active_transcript).put(replace_active_transcript),
         )
         .route(
             "/projects/{project_id}",
@@ -442,13 +443,51 @@ async fn get_active_transcript(
         .get_active(LOCAL_OWNER_ID, project_id)
         .await?;
     let mut headers = HeaderMap::new();
-    headers.insert(
-        header::ETAG,
-        format!("\"transcript-revision-{}\"", transcript.revision)
-            .parse()
-            .expect("revision ETag should be valid"),
-    );
+    headers.insert(header::ETAG, transcript_etag(transcript.revision));
     Ok((headers, Json(transcript.into())))
+}
+
+async fn replace_active_transcript(
+    State(state): State<AppState>,
+    Path(project_id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(request): Json<ReplaceTranscriptRequest>,
+) -> Result<(HeaderMap, Json<TranscriptRevisionResponse>), ApiError> {
+    let if_match = headers
+        .get(header::IF_MATCH)
+        .ok_or(ApplicationError::PreconditionRequired)?
+        .to_str()
+        .map_err(|_| ApplicationError::RevisionConflict)?;
+    let expected_revision =
+        parse_transcript_etag(if_match).ok_or(ApplicationError::RevisionConflict)?;
+    let transcript = state
+        .transcripts
+        .replace(ReplaceTranscript {
+            owner_id: LOCAL_OWNER_ID,
+            project_id,
+            expected_revision,
+            language: request.language,
+            duration_ms: request.duration_ms,
+            cues: request.cues,
+        })
+        .await?;
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(header::ETAG, transcript_etag(transcript.revision));
+    Ok((response_headers, Json(transcript.into())))
+}
+
+fn transcript_etag(revision: i32) -> HeaderValue {
+    HeaderValue::from_str(&format!("\"transcript-revision-{revision}\""))
+        .expect("revision ETag should be valid")
+}
+
+fn parse_transcript_etag(value: &str) -> Option<i32> {
+    value
+        .strip_prefix("\"transcript-revision-")?
+        .strip_suffix('"')?
+        .parse::<i32>()
+        .ok()
+        .filter(|revision| *revision > 0)
 }
 
 async fn get_job(
@@ -515,7 +554,7 @@ async fn stream_job_events(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_range;
+    use super::{parse_range, parse_transcript_etag};
 
     #[test]
     fn parses_bounded_open_and_suffix_ranges() {
@@ -536,5 +575,13 @@ mod tests {
         assert!(parse_range("bytes=5-4", 10).is_none());
         assert!(parse_range("bytes=0-1,3-4", 10).is_none());
         assert!(parse_range("bytes=-0", 10).is_none());
+    }
+
+    #[test]
+    fn parses_only_strong_transcript_revision_etags() {
+        assert_eq!(parse_transcript_etag("\"transcript-revision-7\""), Some(7));
+        assert_eq!(parse_transcript_etag("W/\"transcript-revision-7\""), None);
+        assert_eq!(parse_transcript_etag("\"transcript-revision-0\""), None);
+        assert_eq!(parse_transcript_etag("revision-7"), None);
     }
 }
