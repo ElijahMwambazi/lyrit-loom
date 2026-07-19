@@ -66,13 +66,9 @@ describe("App", () => {
       screen.getByRole("heading", { name: "Your projects" }),
     ).toBeInTheDocument();
     expect(screen.getByText("WEAVE WORDS INTO MOTION")).toBeInTheDocument();
-    expect(
-      screen.getByAltText("Lyrit Loom woven waveform mark"),
-    ).toHaveAttribute("src", "/brand/lyrit-loom-logo-mono.png");
-    expect(document.querySelector(".brand-header-logo")).toHaveAttribute(
-      "src",
-      "/brand/lyrit-loom-logo.png",
-    );
+    expect(screen.getByText("LL")).toHaveClass("brand-placeholder");
+    expect(screen.getByText("Creative workspace")).toBeInTheDocument();
+    expect(document.querySelector(".hero-logo")).not.toBeInTheDocument();
     expect(await screen.findByText("Your loom is ready.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New project" })).toBeEnabled();
   });
@@ -107,6 +103,79 @@ describe("App", () => {
       await screen.findByRole("heading", { name: project.name }),
     ).toBeInTheDocument();
     expect(screen.getByText("1920 × 1080 · 30 fps")).toBeInTheDocument();
+  });
+
+  it("uploads source media with progress and refreshes the project", async () => {
+    const audioAsset = {
+      id: "00000000-0000-4000-8000-000000000020",
+      project_id: project.id,
+      kind: "audio",
+      original_filename: "demo-song.mp3",
+      media_type: "audio/mpeg",
+      bytes: 2048,
+      sha256: "a".repeat(64),
+      duration_ms: 62_000,
+      width: null,
+      height: null,
+      created_at: "2026-07-17T10:01:00Z",
+    };
+    vi.mocked(fetch).mockImplementation(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const { url, method } = requestDetails(input, init);
+        if (url.endsWith("/health/ready")) {
+          return json({ status: "ready", checks: [] });
+        }
+        if (url.endsWith(`/projects/${project.id}`) && method === "GET") {
+          return json({ ...project, audio_asset: audioAsset });
+        }
+        if (url.includes("/projects") && method === "GET") {
+          return json({ items: [project], next_cursor: null });
+        }
+        throw new Error(`Unexpected request: ${method} ${url}`);
+      },
+    );
+
+    class XMLHttpRequestMock extends EventTarget {
+      upload = new EventTarget();
+      status = 0;
+      responseText = "";
+      method = "";
+      url = "";
+
+      open(method: string, url: string) {
+        this.method = method;
+        this.url = url;
+      }
+
+      setRequestHeader() {}
+
+      send(body: FormData) {
+        expect(this.method).toBe("POST");
+        expect(this.url).toContain(`/projects/${project.id}/assets`);
+        expect(body.get("kind")).toBe("audio");
+        this.upload.dispatchEvent(
+          new ProgressEvent("progress", {
+            lengthComputable: true,
+            loaded: 1,
+            total: 2,
+          }),
+        );
+        this.status = 201;
+        queueMicrotask(() => this.dispatchEvent(new Event("load")));
+      }
+    }
+    vi.stubGlobal("XMLHttpRequest", XMLHttpRequestMock);
+
+    render(<App />);
+    const input = await screen.findByLabelText("Choose or drop audio");
+    fireEvent.change(input, {
+      target: {
+        files: [new File(["fake audio"], "demo-song.mp3", { type: "audio/mpeg" })],
+      },
+    });
+
+    expect(await screen.findByText("demo-song.mp3")).toBeInTheDocument();
+    expect(screen.getByText("1:02 · 2 KB")).toBeInTheDocument();
   });
 
   it("receives worker progress and displays the completed result", async () => {

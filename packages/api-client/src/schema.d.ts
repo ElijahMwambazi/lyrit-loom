@@ -894,7 +894,7 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "type": "https://lyric-video.local/problems/revision-conflict",
+                     *       "type": "https://lyrit-loom.local/problems/revision-conflict",
                      *       "title": "Transcript revision conflict",
                      *       "status": 412,
                      *       "code": "revision_conflict",

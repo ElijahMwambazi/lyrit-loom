@@ -27,13 +27,13 @@ Exit criteria:
 - CI fails if generated API types drift from `contracts/openapi.yaml`;
 - a fake job can be enqueued, claimed, progressed, and completed durably.
 
-Verified on 2026-07-17 with `make check`, `docker compose up --build -d`, the API readiness endpoint, and `make smoke`. The production web proxy delivered the persisted probe event stream through `succeeded`, and the UI contract test confirmed that progress and the terminal worker result are rendered. Milestone 1 should not weaken this foundation path.
+Verified on 2026-07-19 with `make check`, `docker compose up --build -d`, the API readiness endpoint, and `make smoke`. The production web proxy delivered the persisted probe event stream through `succeeded`, and the UI contract test confirmed that progress and the terminal worker result are rendered. Milestone 1 should not weaken this foundation path.
 
 ### Milestone 1 — Projects and safe media ingestion
 
 **Goal:** create a project and attach one valid audio file and background image.
 
-Project foundation verified on 2026-07-17: project create/list/get/update is durable and owner-scoped, the generated-client React workspace supports create and rename, and the original readiness/probe path remains covered. Media ingestion and activation are the remaining work in this milestone.
+Milestone verified on 2026-07-19: project CRUD is durable and owner-scoped; source uploads are streamed, atomically stored under generated keys, hashed, bounded, and ffprobe-validated; activation is transactional; replacements preserve older objects; corrupt media is rejected and removed; and the React workspace provides drag/drop progress and validation feedback. The original readiness/probe path remains covered.
 
 Build:
 

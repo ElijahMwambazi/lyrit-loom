@@ -1,4 +1,4 @@
-use lyrit_domain::{BackgroundFit, Job, JobEvent, Project, VideoSettings};
+use lyrit_domain::{Asset, BackgroundFit, Job, JobEvent, Project, VideoSettings};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -82,13 +82,23 @@ pub struct ProjectResponse {
 
 impl From<Project> for ProjectResponse {
     fn from(project: Project) -> Self {
+        Self::with_assets(project, None, None)
+    }
+}
+
+impl ProjectResponse {
+    pub fn with_assets(
+        project: Project,
+        audio_asset: Option<Asset>,
+        background_asset: Option<Asset>,
+    ) -> Self {
         Self {
             id: project.id,
             name: project.name,
             status: project.status.to_string(),
             video_settings: project.video_settings.into(),
-            audio_asset: None,
-            background_asset: None,
+            audio_asset: audio_asset.map(Into::into),
+            background_asset: background_asset.map(Into::into),
             active_transcript_revision: project.active_transcript_revision,
             latest_render_id: project.latest_render_id,
             created_at: format_time(project.created_at),
@@ -134,8 +144,28 @@ pub struct AssetResponse {
     pub duration_ms: Option<i64>,
     pub width: Option<i32>,
     pub height: Option<i32>,
-    pub content_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_url: Option<String>,
     pub created_at: String,
+}
+
+impl From<Asset> for AssetResponse {
+    fn from(asset: Asset) -> Self {
+        Self {
+            id: asset.id,
+            project_id: asset.project_id,
+            kind: asset.kind.to_string(),
+            original_filename: asset.original_filename,
+            media_type: asset.media_type,
+            bytes: asset.bytes,
+            sha256: asset.sha256,
+            duration_ms: asset.duration_ms,
+            width: asset.width,
+            height: asset.height,
+            content_url: None,
+            created_at: format_time(asset.created_at),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]

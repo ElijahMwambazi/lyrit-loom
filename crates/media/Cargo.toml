@@ -1,5 +1,5 @@
 [package]
-name = "lyrit-application"
+name = "lyrit-media"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,9 +7,11 @@ publish.workspace = true
 
 [dependencies]
 async-trait.workspace = true
-bytes.workspace = true
 futures-util.workspace = true
+lyrit-application = { path = "../application" }
 lyrit-domain = { path = "../domain" }
+serde.workspace = true
 serde_json.workspace = true
-thiserror.workspace = true
+sha2.workspace = true
+tokio.workspace = true
 uuid.workspace = true

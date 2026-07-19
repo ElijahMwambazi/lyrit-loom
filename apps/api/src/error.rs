@@ -30,13 +30,28 @@ impl From<ApplicationError> for ApiError {
                 title: "Invalid request",
                 detail,
             },
+            ApplicationError::PayloadTooLarge => Self {
+                status: StatusCode::PAYLOAD_TOO_LARGE,
+                code: "payload_too_large",
+                title: "Payload too large",
+                detail: "The uploaded file exceeds the configured size limit.".to_owned(),
+            },
+            ApplicationError::UnsupportedMedia(detail) => Self {
+                status: StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                code: "unsupported_media",
+                title: "Unsupported media",
+                detail,
+            },
             ApplicationError::NotFound => Self {
                 status: StatusCode::NOT_FOUND,
                 code: "not_found",
                 title: "Resource not found",
                 detail: "The requested resource does not exist.".to_owned(),
             },
-            ApplicationError::Repository(_) | ApplicationError::InvalidData(_) => Self {
+            ApplicationError::Repository(_)
+            | ApplicationError::InvalidData(_)
+            | ApplicationError::Artifact(_)
+            | ApplicationError::MediaInspection(_) => Self {
                 status: StatusCode::INTERNAL_SERVER_ERROR,
                 code: "internal_error",
                 title: "Internal error",
@@ -50,7 +65,7 @@ impl From<ApplicationError> for ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         let problem = Problem {
-            r#type: format!("https://lyric-video.local/problems/{}", self.code),
+            r#type: format!("https://lyrit-loom.local/problems/{}", self.code),
             title: self.title.to_owned(),
             status: self.status.as_u16(),
             code: self.code.to_owned(),

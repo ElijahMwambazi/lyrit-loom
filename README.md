@@ -4,7 +4,7 @@ Weave words into motion.
 
 Private monorepo for turning audio, a background image, and editable word timestamps into polished lyric videos.
 
-Milestone 0 is executable, and the first Milestone 1 slice adds durable project creation, listing, lookup, and editing. The system boots a Rust API, PostgreSQL-backed durable worker, React/Vite project workspace, generated TypeScript API client, and a deterministic fake transcription process boundary.
+Milestones 0 and 1 are executable: projects and validated source media are durable, while the separate PostgreSQL-backed worker and deterministic fake transcriber preserve the foundation for transcription and rendering.
 
 ## Run it
 
@@ -14,7 +14,7 @@ Requirements: Docker with the Compose plugin.
 docker compose up --build -d
 ```
 
-Open [http://localhost:3000](http://localhost:3000), create a project, and rename it from its project card. The Milestone 0 queue check remains available under **Foundation diagnostics**; it queues real durable work, follows persisted progress over Server-Sent Events, and shows the worker result.
+Open [http://localhost:3000](http://localhost:3000), create a project, then choose or drop an audio file and background image into its source cards. Upload progress is visible in the browser; the API streams, hashes, probes, stores, and activates supported media. The Milestone 0 queue check remains available under **Foundation diagnostics**.
 
 From another terminal, the same check is available as:
 
@@ -34,10 +34,11 @@ The PostgreSQL volume is retained. Remove it only when you intentionally want to
 
 ## What exists now
 
-- Axum API with project create/list/get/update, liveness/readiness, job lookup, SSE event stream, request IDs, and a dev-only probe endpoint.
+- Axum API with project CRUD, streamed multipart source uploads, liveness/readiness, job lookup, SSE event stream, request IDs, and a dev-only probe endpoint.
+- Atomic local artifact storage with generated keys, SHA-256 checksums, upload limits, and bounded ffprobe validation for audio and background images.
 - Separate Tokio worker claiming PostgreSQL jobs with row locks, leases, heartbeats, monotonic progress, and terminal events.
 - SQLx migrations for projects/assets, durable jobs, and event history.
-- React 19 + Vite 8 project workspace using an OpenAPI-generated client.
+- React 19 + Vite 8 project workspace with drag/drop upload progress using current OpenAPI-generated types.
 - Versioned fake transcriber CLI and JSON Schema contract; no Whisper model download required yet.
 - Compose images, Nginx same-origin API proxy, CI, lockfile workflows, scripts, architecture documents, and an accepted ADR.
 
@@ -53,6 +54,7 @@ crates/
   domain/          framework-free job entities/state
   application/     repository port and job use cases
   persistence/     SQLx PostgreSQL adapter
+  media/           local artifact storage and ffprobe adapter
   api-model/       serialized HTTP response models
 contracts/
   openapi.yaml
@@ -90,6 +92,6 @@ See [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) for contract workflow, fake tra
 - [`docs/DELIVERY_GUIDE.md`](docs/DELIVERY_GUIDE.md) — milestones and implementation notes for Rust, React, Whisper, ASS, and FFmpeg.
 - [`contracts/openapi.yaml`](contracts/openapi.yaml) — OpenAPI 3.1 source of truth.
 
-The next Milestone 1 slice is streamed media upload, local artifact storage, and ffprobe validation for project audio and background images.
+The next vertical slice is Milestone 2: normalize active audio and enqueue fake-transcriber work through the existing durable worker path.
 
 This repository is proprietary and is not licensed for public distribution.

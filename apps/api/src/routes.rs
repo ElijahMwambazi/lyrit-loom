@@ -2,16 +2,17 @@ use std::{convert::Infallible, time::Duration};
 
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
+    extract::{DefaultBodyLimit, Multipart, Path, Query, State},
     http::{HeaderMap, HeaderName, StatusCode, header},
     response::sse::{Event, KeepAlive, Sse},
     routing::{get, post},
 };
 use lyrit_api_model::{
-    CreateProjectRequest, HealthResponse, JobEventResponse, JobResponse, ProjectPageResponse,
-    ProjectResponse, ReadinessCheck, ReadinessResponse, UpdateProjectRequest,
+    AssetResponse, CreateProjectRequest, HealthResponse, JobEventResponse, JobResponse,
+    ProjectPageResponse, ProjectResponse, ReadinessCheck, ReadinessResponse, UpdateProjectRequest,
 };
-use lyrit_application::ProjectChanges;
+use lyrit_application::{ApplicationError, ProjectChanges, UploadAsset};
+use lyrit_domain::{AssetKind, Project};
 use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
 use tower_http::{
@@ -25,10 +26,12 @@ use crate::{error::ApiError, state::AppState};
 const LOCAL_OWNER_ID: Uuid = Uuid::from_u128(1);
 
 pub fn router(state: AppState) -> Router {
+    let body_limit = state.max_upload_bytes.saturating_add(1024 * 1024);
     let mut api = Router::new()
         .route("/health/live", get(liveness))
         .route("/health/ready", get(readiness))
         .route("/projects", get(list_projects).post(create_project))
+        .route("/projects/{project_id}/assets", post(upload_project_asset))
         .route(
             "/projects/{project_id}",
             get(get_project).patch(update_project),
@@ -44,6 +47,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .nest("/api/v1", api)
         .with_state(state)
+        .layer(DefaultBodyLimit::max(body_limit))
         .layer(PropagateRequestIdLayer::new(request_id.clone()))
         .layer(SetRequestIdLayer::new(request_id, MakeRequestUuid))
         .layer(TraceLayer::new_for_http())
@@ -88,8 +92,12 @@ async fn list_projects(
         .projects
         .list(LOCAL_OWNER_ID, query.cursor, query.limit)
         .await?;
+    let mut items = Vec::with_capacity(page.items.len());
+    for project in page.items {
+        items.push(hydrate_project_response(&state, project).await?);
+    }
     Ok(Json(ProjectPageResponse {
-        items: page.items.into_iter().map(Into::into).collect(),
+        items,
         next_cursor: page.next_cursor,
     }))
 }
@@ -98,9 +106,8 @@ async fn get_project(
     State(state): State<AppState>,
     Path(project_id): Path<Uuid>,
 ) -> Result<Json<ProjectResponse>, ApiError> {
-    Ok(Json(
-        state.projects.get(LOCAL_OWNER_ID, project_id).await?.into(),
-    ))
+    let project = state.projects.get(LOCAL_OWNER_ID, project_id).await?;
+    Ok(Json(hydrate_project_response(&state, project).await?))
 }
 
 async fn update_project(
@@ -119,7 +126,104 @@ async fn update_project(
             },
         )
         .await?;
-    Ok(Json(project.into()))
+    Ok(Json(hydrate_project_response(&state, project).await?))
+}
+
+async fn upload_project_asset(
+    State(state): State<AppState>,
+    Path(project_id): Path<Uuid>,
+    mut multipart: Multipart,
+) -> Result<(StatusCode, Json<AssetResponse>), ApiError> {
+    let mut kind = None;
+    while let Some(field) = multipart.next_field().await.map_err(multipart_error)? {
+        match field.name() {
+            Some("kind") => {
+                if kind.is_some() {
+                    return Err(ApplicationError::Validation(
+                        "multipart kind must be provided exactly once".to_owned(),
+                    )
+                    .into());
+                }
+                let value = field.text().await.map_err(multipart_error)?;
+                kind = Some(value.parse::<AssetKind>().map_err(|_| {
+                    ApplicationError::Validation(
+                        "asset kind must be audio or background".to_owned(),
+                    )
+                })?);
+            }
+            Some("file") => {
+                let kind = kind.ok_or_else(|| {
+                    ApplicationError::Validation(
+                        "multipart kind must appear before the file field".to_owned(),
+                    )
+                })?;
+                let original_filename = field.file_name().map(str::to_owned);
+                let declared_media_type = field.content_type().map(str::to_owned);
+                let body = futures_util::stream::unfold(field, |mut field| async move {
+                    match field.chunk().await {
+                        Ok(Some(chunk)) => Some((Ok(chunk), field)),
+                        Ok(None) => None,
+                        Err(error) => Some((
+                            Err(ApplicationError::Validation(format!(
+                                "multipart upload interrupted: {error}"
+                            ))),
+                            field,
+                        )),
+                    }
+                });
+                let asset = state
+                    .assets
+                    .upload(
+                        LOCAL_OWNER_ID,
+                        UploadAsset {
+                            project_id,
+                            kind,
+                            original_filename,
+                            declared_media_type,
+                            body: Box::pin(body),
+                        },
+                    )
+                    .await?;
+                return Ok((StatusCode::CREATED, Json(asset.into())));
+            }
+            Some(other) => {
+                return Err(ApplicationError::Validation(format!(
+                    "unexpected multipart field: {other}"
+                ))
+                .into());
+            }
+            None => {
+                return Err(ApplicationError::Validation(
+                    "multipart fields must be named".to_owned(),
+                )
+                .into());
+            }
+        }
+    }
+    Err(ApplicationError::Validation("multipart file field is required".to_owned()).into())
+}
+
+async fn hydrate_project_response(
+    state: &AppState,
+    project: Project,
+) -> Result<ProjectResponse, ApiError> {
+    let audio_asset = match project.audio_asset_id {
+        Some(id) => state.assets.get(id).await?,
+        None => None,
+    };
+    let background_asset = match project.background_asset_id {
+        Some(id) => state.assets.get(id).await?,
+        None => None,
+    };
+    Ok(ProjectResponse::with_assets(
+        project,
+        audio_asset,
+        background_asset,
+    ))
+}
+
+fn multipart_error(error: axum::extract::multipart::MultipartError) -> ApiError {
+    ApplicationError::Validation(format!("invalid multipart request: {error}")).into()
 }
 
 async fn liveness() -> Json<HealthResponse> {

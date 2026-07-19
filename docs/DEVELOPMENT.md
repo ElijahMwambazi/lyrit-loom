@@ -87,7 +87,22 @@ The probe is scaffolding, not a production job type. Milestone 2 replaces it wit
 
 The first Milestone 1 slice implements `POST /projects`, `GET /projects`, `GET /projects/{project_id}`, and `PATCH /projects/{project_id}` from the OpenAPI contract. Project names are trimmed and limited to 120 characters; video settings enforce supported dimensions and frame rates in the application layer. PostgreSQL owns the durable records and timestamps.
 
-Asset upload remains intentionally unimplemented until the next slice, where request bodies must be streamed to an `ArtifactStore` and validated with ffprobe outside the HTTP request transaction.
+## Source media uploads
+
+`POST /projects/{project_id}/assets` streams the multipart file directly into the configured artifact store while counting bytes and calculating SHA-256. The local adapter writes a temporary sibling, flushes it, and atomically renames it before ffprobe validation. Only then does a short PostgreSQL transaction insert metadata and replace the project's active source pointer; older source bytes remain available for retention or rollback policy.
+
+Supported source formats are MP3, AAC/MP4, FLAC, OGG/Vorbis, Opus/WebM, and PCM/WAV audio, plus PNG, JPEG, and WebP backgrounds. The API records canonical media type, audio duration, image dimensions, checksum, byte count, and selected ffprobe facts. Corrupt files, mismatched declared media, unsupported codecs, excessive duration, and excessive upload bytes are rejected without activation.
+
+Configuration defaults are in `.env.example`:
+
+```text
+ARTIFACT_ROOT=./artifacts
+FFPROBE_PATH=ffprobe
+MAX_UPLOAD_BYTES=536870912
+MAX_AUDIO_DURATION_MS=900000
+```
+
+Compose stores originals in the shared `artifact-data` volume mounted into both API and worker containers. Host development requires `ffprobe` on `PATH` unless `FFPROBE_PATH` is set explicitly.
 
 ## Checks
 

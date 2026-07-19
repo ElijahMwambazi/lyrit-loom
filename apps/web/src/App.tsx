@@ -1,6 +1,7 @@
 import { createApiClient } from "@lyrit/api-client";
 import type { components } from "@lyrit/api-client";
 import {
+  type DragEvent,
   type FormEvent,
   useCallback,
   useEffect,
@@ -10,6 +11,14 @@ import {
 
 type Readiness = "checking" | "ready" | "unavailable";
 type Project = components["schemas"]["Project"];
+type Asset = components["schemas"]["Asset"];
+type SourceAssetKind = components["schemas"]["SourceAssetKind"];
+
+type UploadState = {
+  progress: number;
+  status: "uploading" | "failed";
+  error?: string;
+};
 
 type ProbeJob = {
   id: string;
@@ -37,6 +46,7 @@ export function App() {
   const [creating, setCreating] = useState(false);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
+  const [uploads, setUploads] = useState<Record<string, UploadState>>({});
   const [probe, setProbe] = useState<ProbeJob | null>(null);
   const [probeError, setProbeError] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -107,6 +117,79 @@ export function App() {
     setEditingProjectId(null);
   }
 
+  function uploadAsset(project: Project, kind: SourceAssetKind, file: File) {
+    const key = uploadKey(project.id, kind);
+    setUploads((current) => ({
+      ...current,
+      [key]: { progress: 0, status: "uploading" },
+    }));
+    const form = new FormData();
+    form.append("kind", kind);
+    form.append("file", file);
+    const request = new XMLHttpRequest();
+    request.open("POST", `${apiBaseUrl}/projects/${project.id}/assets`);
+    request.setRequestHeader("Accept", "application/json");
+    request.upload.addEventListener("progress", (event) => {
+      if (!event.lengthComputable) return;
+      setUploads((current) => ({
+        ...current,
+        [key]: {
+          progress: Math.round((event.loaded / event.total) * 100),
+          status: "uploading",
+        },
+      }));
+    });
+    request.addEventListener("load", () => {
+      if (request.status < 200 || request.status >= 300) {
+        setUploadFailure(key, uploadError(request));
+        return;
+      }
+      void refreshProject(project.id, key);
+    });
+    request.addEventListener("error", () => {
+      setUploadFailure(key, "The upload was interrupted. Please try again.");
+    });
+    request.send(form);
+  }
+
+  async function refreshProject(projectId: string, uploadStateKey: string) {
+    const { data, error } = await api.GET("/projects/{project_id}", {
+      params: { path: { project_id: projectId } },
+    });
+    if (error || !data) {
+      setUploadFailure(
+        uploadStateKey,
+        "The asset was stored, but the project could not be refreshed.",
+      );
+      return;
+    }
+    setProjects((current) =>
+      current.map((project) => (project.id === data.id ? data : project)),
+    );
+    setUploads((current) => {
+      const next = { ...current };
+      delete next[uploadStateKey];
+      return next;
+    });
+  }
+
+  function setUploadFailure(key: string, error: string) {
+    setUploads((current) => ({
+      ...current,
+      [key]: { progress: 0, status: "failed", error },
+    }));
+  }
+
+  function handleDrop(
+    event: DragEvent<HTMLLabelElement>,
+    project: Project,
+    kind: SourceAssetKind,
+  ) {
+    event.preventDefault();
+    const file = event.dataTransfer.files[0];
+    if (file) uploadAsset(project, kind, file);
+  }
+
   async function runProbe() {
     eventSourceRef.current?.close();
     setProbeError(null);
@@ -150,14 +233,9 @@ export function App() {
     <main className="app-shell">
       <header className="brand-header" aria-label="Lyrit Loom">
         <div className="brand-lockup">
-          <span className="brand-header-logo-frame" aria-hidden="true">
-            <img
-              src="/brand/lyrit-loom-logo.png"
-              alt=""
-              className="brand-header-logo"
-            />
-          </span>
-          <span>Lyrit Loom</span>
+          <span className="brand-placeholder" aria-hidden="true">LL</span>
+          <span className="brand-name">Lyrit Loom</span>
+          <span className="brand-context">Creative workspace</span>
         </div>
         <div className="header-readiness">
           <span className={`status-dot status-${readiness}`} aria-hidden="true" />
@@ -166,21 +244,12 @@ export function App() {
       </header>
 
       <section className="workspace-intro" aria-labelledby="page-title">
-        <div>
-          <div className="eyebrow">WEAVE WORDS INTO MOTION</div>
-          <h1 id="page-title">Your projects</h1>
-          <p className="lede">
-            Start with a song, shape every word, and render motion that follows
-            the music.
-          </p>
-        </div>
-        <div className="hero-logo-frame">
-          <img
-            src="/brand/lyrit-loom-logo-mono.png"
-            alt="Lyrit Loom woven waveform mark"
-            className="hero-logo"
-          />
-        </div>
+        <div className="eyebrow">WEAVE WORDS INTO MOTION</div>
+        <h1 id="page-title">Your projects</h1>
+        <p className="lede">
+          Start with a song, shape every word, and render motion that follows
+          the music.
+        </p>
       </section>
 
       <section className="projects-section" aria-labelledby="projects-title">
@@ -275,7 +344,31 @@ export function App() {
                       >
                         Rename
                       </button>
-                      <span>Media setup next</span>
+                      <span>
+                        {project.audio_asset && project.background_asset
+                          ? "Sources ready"
+                          : "Add source media"}
+                      </span>
+                    </div>
+                    <div className="asset-slots">
+                      <AssetUpload
+                        project={project}
+                        kind="audio"
+                        asset={project.audio_asset}
+                        state={uploads[uploadKey(project.id, "audio")]}
+                        onFile={(file) => uploadAsset(project, "audio", file)}
+                        onDrop={(event) => handleDrop(event, project, "audio")}
+                      />
+                      <AssetUpload
+                        project={project}
+                        kind="background"
+                        asset={project.background_asset}
+                        state={uploads[uploadKey(project.id, "background")]}
+                        onFile={(file) => uploadAsset(project, "background", file)}
+                        onDrop={(event) =>
+                          handleDrop(event, project, "background")
+                        }
+                      />
                     </div>
                   </>
                 )}
@@ -319,9 +412,115 @@ export function App() {
   );
 }
 
+type AssetUploadProps = {
+  project: Project;
+  kind: SourceAssetKind;
+  asset: Asset | null | undefined;
+  state: UploadState | undefined;
+  onFile: (file: File) => void;
+  onDrop: (event: DragEvent<HTMLLabelElement>) => void;
+};
+
+function AssetUpload({
+  project,
+  kind,
+  asset,
+  state,
+  onFile,
+  onDrop,
+}: AssetUploadProps) {
+  const label = kind === "audio" ? "Audio" : "Background";
+  const inputId = `${project.id}-${kind}-upload`;
+  const uploading = state?.status === "uploading";
+  return (
+    <div className={`asset-slot ${asset ? "asset-present" : ""}`}>
+      <div className="asset-slot-heading">
+        <strong>{label}</strong>
+        {asset && <span>Ready</span>}
+      </div>
+      {asset ? (
+        <div className="asset-summary">
+          <span title={asset.original_filename ?? undefined}>
+            {asset.original_filename ?? "Source media"}
+          </span>
+          <small>{assetDescription(asset)}</small>
+        </div>
+      ) : (
+        <p>{kind === "audio" ? "MP3, WAV, FLAC, OGG" : "PNG, JPEG, or WebP"}</p>
+      )}
+      <label
+        className="asset-dropzone"
+        htmlFor={inputId}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={onDrop}
+      >
+        {uploading
+          ? `Uploading ${state.progress}%`
+          : asset
+            ? `Replace ${label.toLowerCase()}`
+            : `Choose or drop ${label.toLowerCase()}`}
+      </label>
+      <input
+        id={inputId}
+        className="visually-hidden"
+        type="file"
+        accept={kind === "audio" ? "audio/*" : "image/png,image/jpeg,image/webp"}
+        disabled={uploading}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) onFile(file);
+          event.target.value = "";
+        }}
+      />
+      {uploading && (
+        <div className="upload-progress" aria-label={`${label} upload progress`}>
+          <span style={{ width: `${state.progress}%` }} />
+        </div>
+      )}
+      {state?.status === "failed" && (
+        <small className="upload-error">{state.error}</small>
+      )}
+    </div>
+  );
+}
+
 function formatProjectDate(timestamp: string) {
   return new Intl.DateTimeFormat(undefined, {
     month: "short",
     day: "numeric",
   }).format(new Date(timestamp));
+}
+
+function uploadKey(projectId: string, kind: SourceAssetKind) {
+  return `${projectId}:${kind}`;
+}
+
+function assetDescription(asset: Asset) {
+  if (asset.kind === "audio" && asset.duration_ms != null) {
+    const totalSeconds = Math.round(asset.duration_ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = String(totalSeconds % 60).padStart(2, "0");
+    return `${minutes}:${seconds} · ${formatBytes(asset.bytes)}`;
+  }
+  if (asset.width && asset.height) {
+    return `${asset.width} × ${asset.height} · ${formatBytes(asset.bytes)}`;
+  }
+  return formatBytes(asset.bytes);
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function uploadError(request: XMLHttpRequest) {
+  try {
+    const problem = JSON.parse(request.responseText) as { detail?: string };
+    if (problem.detail) return problem.detail;
+  } catch {
+    // Fall through to a stable client message.
+  }
+  if (request.status === 413) return "This file exceeds the upload size limit.";
+  if (request.status === 415) return "This media format is not supported.";
+  return "The media could not be uploaded.";
 }

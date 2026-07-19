@@ -2,10 +2,12 @@ use std::str::FromStr;
 
 use async_trait::async_trait;
 use lyrit_application::{
-    ApplicationError, JobRepository, NewProject, ProjectChanges, ProjectRepository,
+    ApplicationError, AssetRepository, JobRepository, NewAsset, NewProject, ProjectChanges,
+    ProjectRepository,
 };
 use lyrit_domain::{
-    BackgroundFit, Job, JobError, JobEvent, JobStatus, Project, ProjectStatus, VideoSettings,
+    Asset, AssetKind, BackgroundFit, Job, JobError, JobEvent, JobStatus, Project, ProjectStatus,
+    VideoSettings,
 };
 use serde_json::Value;
 use sqlx::{PgPool, Postgres, Transaction};
@@ -187,6 +189,164 @@ impl ProjectRepository for PgProjectRepository {
         .map_err(repository_error)?
         .map(Project::try_from)
         .transpose()
+    }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct AssetRecord {
+    id: Uuid,
+    project_id: Uuid,
+    kind: String,
+    storage_key: String,
+    original_filename: Option<String>,
+    media_type: String,
+    bytes: i64,
+    sha256: String,
+    duration_ms: Option<i64>,
+    width: Option<i32>,
+    height: Option<i32>,
+    tool_metadata: Value,
+    created_at: OffsetDateTime,
+}
+
+impl TryFrom<AssetRecord> for Asset {
+    type Error = ApplicationError;
+
+    fn try_from(record: AssetRecord) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: record.id,
+            project_id: record.project_id,
+            kind: AssetKind::from_str(&record.kind).map_err(ApplicationError::InvalidData)?,
+            storage_key: record.storage_key,
+            original_filename: record.original_filename,
+            media_type: record.media_type,
+            bytes: record.bytes,
+            sha256: record.sha256,
+            duration_ms: record.duration_ms,
+            width: record.width,
+            height: record.height,
+            tool_metadata: record.tool_metadata,
+            created_at: record.created_at,
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct PgAssetRepository {
+    pool: PgPool,
+}
+
+impl PgAssetRepository {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+const ASSET_COLUMNS: &str = r#"
+    id, project_id, kind, storage_key, original_filename, media_type, bytes, sha256,
+    duration_ms, width, height, tool_metadata, created_at
+"#;
+
+#[async_trait]
+impl AssetRepository for PgAssetRepository {
+    async fn get(&self, id: Uuid) -> Result<Option<Asset>, ApplicationError> {
+        let query = format!("SELECT {ASSET_COLUMNS} FROM assets WHERE id = $1");
+        sqlx::query_as::<_, AssetRecord>(&query)
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(repository_error)?
+            .map(Asset::try_from)
+            .transpose()
+    }
+
+    async fn activate(
+        &self,
+        owner_id: Uuid,
+        asset: NewAsset,
+    ) -> Result<Option<Asset>, ApplicationError> {
+        let mut transaction = self.pool.begin().await.map_err(repository_error)?;
+        let project = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM projects WHERE id = $1 AND owner_id = $2 FOR UPDATE",
+        )
+        .bind(asset.project_id)
+        .bind(owner_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(repository_error)?;
+        if project.is_none() {
+            transaction.rollback().await.map_err(repository_error)?;
+            return Ok(None);
+        }
+
+        let query = format!(
+            r#"
+            INSERT INTO assets (
+                id, project_id, kind, storage_key, original_filename, media_type, bytes, sha256,
+                duration_ms, width, height, tool_metadata
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            RETURNING {ASSET_COLUMNS}
+            "#
+        );
+        let record = sqlx::query_as::<_, AssetRecord>(&query)
+            .bind(asset.id)
+            .bind(asset.project_id)
+            .bind(asset.kind.as_str())
+            .bind(asset.storage_key)
+            .bind(asset.original_filename)
+            .bind(asset.media_type)
+            .bind(asset.bytes)
+            .bind(asset.sha256)
+            .bind(asset.duration_ms)
+            .bind(asset.width)
+            .bind(asset.height)
+            .bind(asset.tool_metadata)
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(repository_error)?;
+
+        let pointer = match asset.kind {
+            AssetKind::Audio => "audio_asset_id",
+            AssetKind::Background => "background_asset_id",
+            _ => {
+                transaction.rollback().await.map_err(repository_error)?;
+                return Err(ApplicationError::Validation(
+                    "only source assets can be activated on a project".to_owned(),
+                ));
+            }
+        };
+        let update = format!(
+            r#"
+            UPDATE projects
+            SET {pointer} = $2,
+                status = CASE
+                    WHEN {other_pointer} IS NOT NULL THEN 'ready'
+                    ELSE 'draft'
+                END,
+                active_transcript_revision = CASE
+                    WHEN $3 = 'audio' THEN NULL
+                    ELSE active_transcript_revision
+                END,
+                latest_render_id = NULL,
+                updated_at = now()
+            WHERE id = $1
+            "#,
+            other_pointer = if asset.kind == AssetKind::Audio {
+                "background_asset_id"
+            } else {
+                "audio_asset_id"
+            }
+        );
+        sqlx::query(&update)
+            .bind(asset.project_id)
+            .bind(asset.id)
+            .bind(asset.kind.as_str())
+            .execute(&mut *transaction)
+            .await
+            .map_err(repository_error)?;
+        transaction.commit().await.map_err(repository_error)?;
+        Asset::try_from(record).map(Some)
     }
 }
 

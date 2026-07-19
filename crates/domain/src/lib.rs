@@ -206,6 +206,70 @@ pub struct Project {
     pub updated_at: OffsetDateTime,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssetKind {
+    Audio,
+    Background,
+    NormalizedAudio,
+    Subtitle,
+    Video,
+}
+
+impl AssetKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Audio => "audio",
+            Self::Background => "background",
+            Self::NormalizedAudio => "normalized_audio",
+            Self::Subtitle => "subtitle",
+            Self::Video => "video",
+        }
+    }
+
+    pub const fn is_source(self) -> bool {
+        matches!(self, Self::Audio | Self::Background)
+    }
+}
+
+impl fmt::Display for AssetKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for AssetKind {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "audio" => Ok(Self::Audio),
+            "background" => Ok(Self::Background),
+            "normalized_audio" => Ok(Self::NormalizedAudio),
+            "subtitle" => Ok(Self::Subtitle),
+            "video" => Ok(Self::Video),
+            other => Err(format!("unknown asset kind: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Asset {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub kind: AssetKind,
+    pub storage_key: String,
+    pub original_filename: Option<String>,
+    pub media_type: String,
+    pub bytes: i64,
+    pub sha256: String,
+    pub duration_ms: Option<i64>,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+    pub tool_metadata: Value,
+    pub created_at: OffsetDateTime,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,6 +314,16 @@ mod tests {
             BackgroundFit::Stretch,
         ] {
             assert_eq!(fit.to_string().parse::<BackgroundFit>().unwrap(), fit);
+        }
+
+        for kind in [
+            AssetKind::Audio,
+            AssetKind::Background,
+            AssetKind::NormalizedAudio,
+            AssetKind::Subtitle,
+            AssetKind::Video,
+        ] {
+            assert_eq!(kind.to_string().parse::<AssetKind>().unwrap(), kind);
         }
     }
 }

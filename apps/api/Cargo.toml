@@ -13,6 +13,7 @@ http.workspace = true
 lyrit-api-model = { path = "../../crates/api-model" }
 lyrit-application = { path = "../../crates/application" }
 lyrit-domain = { path = "../../crates/domain" }
+lyrit-media = { path = "../../crates/media" }
 lyrit-persistence = { path = "../../crates/persistence" }
 serde.workspace = true
 serde_json.workspace = true

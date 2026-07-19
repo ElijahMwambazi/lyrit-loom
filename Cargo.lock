@@ -866,6 +866,7 @@ dependencies = [
  "lyrit-api-model",
  "lyrit-application",
  "lyrit-domain",
+ "lyrit-media",
  "lyrit-persistence",
  "serde",
  "serde_json",
@@ -893,6 +894,8 @@ name = "lyrit-application"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bytes",
+ "futures-util",
  "lyrit-domain",
  "serde_json",
  "thiserror",
@@ -906,6 +909,21 @@ dependencies = [
  "serde",
  "serde_json",
  "time",
+ "uuid",
+]
+
+[[package]]
+name = "lyrit-media"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "lyrit-application",
+ "lyrit-domain",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
  "uuid",
 ]
 

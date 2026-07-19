@@ -1,5 +1,9 @@
+use std::pin::Pin;
+
 use async_trait::async_trait;
-use lyrit_domain::{Job, JobError, JobEvent, Project, VideoSettings};
+use bytes::Bytes;
+use futures_util::Stream;
+use lyrit_domain::{Asset, AssetKind, Job, JobError, JobEvent, Project, VideoSettings};
 use serde_json::{Value, json};
 use thiserror::Error;
 use uuid::Uuid;
@@ -10,6 +14,14 @@ pub enum ApplicationError {
     NotFound,
     #[error("invalid request: {0}")]
     Validation(String),
+    #[error("upload exceeds the configured size limit")]
+    PayloadTooLarge,
+    #[error("unsupported media: {0}")]
+    UnsupportedMedia(String),
+    #[error("artifact operation failed: {0}")]
+    Artifact(String),
+    #[error("media inspection failed: {0}")]
+    MediaInspection(String),
     #[error("repository failure: {0}")]
     Repository(String),
     #[error("invalid persisted data: {0}")]
@@ -34,6 +46,231 @@ pub struct ProjectChanges {
 pub struct ProjectPage {
     pub items: Vec<Project>,
     pub next_cursor: Option<String>,
+}
+
+pub type ByteStream<'a> = Pin<Box<dyn Stream<Item = Result<Bytes, ApplicationError>> + Send + 'a>>;
+
+#[derive(Debug, Clone)]
+pub struct StoredObject {
+    pub storage_key: String,
+    pub bytes: i64,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct MediaFacts {
+    pub media_type: String,
+    pub duration_ms: Option<i64>,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+    pub tool_metadata: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewAsset {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub kind: AssetKind,
+    pub storage_key: String,
+    pub original_filename: Option<String>,
+    pub media_type: String,
+    pub bytes: i64,
+    pub sha256: String,
+    pub duration_ms: Option<i64>,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+    pub tool_metadata: Value,
+}
+
+#[async_trait]
+pub trait AssetRepository: Clone + Send + Sync + 'static {
+    async fn get(&self, id: Uuid) -> Result<Option<Asset>, ApplicationError>;
+    async fn activate(
+        &self,
+        owner_id: Uuid,
+        asset: NewAsset,
+    ) -> Result<Option<Asset>, ApplicationError>;
+}
+
+#[async_trait]
+pub trait ArtifactStore: Clone + Send + Sync + 'static {
+    async fn put(
+        &self,
+        storage_key: &str,
+        body: ByteStream<'_>,
+        max_bytes: i64,
+    ) -> Result<StoredObject, ApplicationError>;
+    async fn delete(&self, storage_key: &str) -> Result<(), ApplicationError>;
+}
+
+#[async_trait]
+pub trait MediaInspector: Clone + Send + Sync + 'static {
+    async fn inspect(
+        &self,
+        storage_key: &str,
+        kind: AssetKind,
+    ) -> Result<MediaFacts, ApplicationError>;
+}
+
+pub struct UploadAsset<'a> {
+    pub project_id: Uuid,
+    pub kind: AssetKind,
+    pub original_filename: Option<String>,
+    pub declared_media_type: Option<String>,
+    pub body: ByteStream<'a>,
+}
+
+#[derive(Clone)]
+pub struct AssetService<A, P, S, M> {
+    assets: A,
+    projects: P,
+    store: S,
+    inspector: M,
+    max_upload_bytes: i64,
+    max_audio_duration_ms: i64,
+}
+
+impl<A, P, S, M> AssetService<A, P, S, M>
+where
+    A: AssetRepository,
+    P: ProjectRepository,
+    S: ArtifactStore,
+    M: MediaInspector,
+{
+    pub fn new(
+        assets: A,
+        projects: P,
+        store: S,
+        inspector: M,
+        max_upload_bytes: i64,
+        max_audio_duration_ms: i64,
+    ) -> Self {
+        Self {
+            assets,
+            projects,
+            store,
+            inspector,
+            max_upload_bytes,
+            max_audio_duration_ms,
+        }
+    }
+
+    pub async fn get(&self, id: Uuid) -> Result<Option<Asset>, ApplicationError> {
+        self.assets.get(id).await
+    }
+
+    pub async fn upload(
+        &self,
+        owner_id: Uuid,
+        upload: UploadAsset<'_>,
+    ) -> Result<Asset, ApplicationError> {
+        if !upload.kind.is_source() {
+            return Err(ApplicationError::Validation(
+                "only audio and background source assets may be uploaded".to_owned(),
+            ));
+        }
+        self.projects
+            .get(owner_id, upload.project_id)
+            .await?
+            .ok_or(ApplicationError::NotFound)?;
+        validate_declared_media_type(upload.kind, upload.declared_media_type.as_deref())?;
+        let original_filename = validate_filename(upload.original_filename)?;
+        let asset_id = Uuid::new_v4();
+        let storage_key = format!("projects/{}/assets/{}/source", upload.project_id, asset_id);
+        let stored = self
+            .store
+            .put(&storage_key, upload.body, self.max_upload_bytes)
+            .await?;
+
+        let facts = match self.inspector.inspect(&storage_key, upload.kind).await {
+            Ok(facts) => facts,
+            Err(error) => {
+                let _ = self.store.delete(&storage_key).await;
+                return Err(error);
+            }
+        };
+        if upload.kind == AssetKind::Audio
+            && facts
+                .duration_ms
+                .is_some_and(|duration| duration > self.max_audio_duration_ms)
+        {
+            let _ = self.store.delete(&storage_key).await;
+            return Err(ApplicationError::UnsupportedMedia(format!(
+                "audio duration exceeds {} milliseconds",
+                self.max_audio_duration_ms
+            )));
+        }
+
+        let asset = NewAsset {
+            id: asset_id,
+            project_id: upload.project_id,
+            kind: upload.kind,
+            storage_key: stored.storage_key.clone(),
+            original_filename,
+            media_type: facts.media_type,
+            bytes: stored.bytes,
+            sha256: stored.sha256,
+            duration_ms: facts.duration_ms,
+            width: facts.width,
+            height: facts.height,
+            tool_metadata: facts.tool_metadata,
+        };
+        match self.assets.activate(owner_id, asset).await {
+            Ok(Some(asset)) => Ok(asset),
+            Ok(None) => {
+                let _ = self.store.delete(&stored.storage_key).await;
+                Err(ApplicationError::NotFound)
+            }
+            Err(error) => {
+                let _ = self.store.delete(&stored.storage_key).await;
+                Err(error)
+            }
+        }
+    }
+}
+
+fn validate_declared_media_type(
+    kind: AssetKind,
+    declared_media_type: Option<&str>,
+) -> Result<(), ApplicationError> {
+    let Some(media_type) = declared_media_type else {
+        return Ok(());
+    };
+    let expected = match kind {
+        AssetKind::Audio => "audio/",
+        AssetKind::Background => "image/",
+        _ => return Ok(()),
+    };
+    if media_type.starts_with(expected) || media_type == "application/octet-stream" {
+        Ok(())
+    } else {
+        Err(ApplicationError::UnsupportedMedia(format!(
+            "expected {expected} media but received {media_type}"
+        )))
+    }
+}
+
+fn validate_filename(filename: Option<String>) -> Result<Option<String>, ApplicationError> {
+    filename
+        .map(|filename| {
+            let filename = filename
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_owned();
+            if filename.is_empty()
+                || filename.chars().count() > 255
+                || filename.chars().any(char::is_control)
+            {
+                Err(ApplicationError::Validation(
+                    "original filename must contain between 1 and 255 safe characters".to_owned(),
+                ))
+            } else {
+                Ok(filename)
+            }
+        })
+        .transpose()
 }
 
 #[async_trait]
@@ -303,9 +540,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use lyrit_domain::{BackgroundFit, VideoSettings};
+    use lyrit_domain::{AssetKind, BackgroundFit, VideoSettings};
 
-    use super::{ApplicationError, validate_name, validate_video_settings};
+    use super::{
+        ApplicationError, validate_declared_media_type, validate_filename, validate_name,
+        validate_video_settings,
+    };
 
     #[test]
     fn project_names_are_trimmed_and_bounded() {
@@ -342,5 +582,19 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    #[test]
+    fn upload_metadata_is_safely_normalized() {
+        assert_eq!(
+            validate_filename(Some("../../music/demo.mp3".to_owned())).unwrap(),
+            Some("demo.mp3".to_owned())
+        );
+        assert!(validate_filename(Some("bad\nname.mp3".to_owned())).is_err());
+        assert!(validate_declared_media_type(AssetKind::Audio, Some("audio/mpeg")).is_ok());
+        assert!(matches!(
+            validate_declared_media_type(AssetKind::Background, Some("audio/mpeg")),
+            Err(ApplicationError::UnsupportedMedia(_))
+        ));
     }
 }

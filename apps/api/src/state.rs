@@ -1,9 +1,15 @@
-use lyrit_application::{JobService, ProjectService};
-use lyrit_persistence::{PgJobRepository, PgProjectRepository};
+use lyrit_application::{AssetService, JobService, ProjectService};
+use lyrit_media::{FfprobeMediaInspector, LocalArtifactStore};
+use lyrit_persistence::{PgAssetRepository, PgJobRepository, PgProjectRepository};
+
+pub type AppAssetService =
+    AssetService<PgAssetRepository, PgProjectRepository, LocalArtifactStore, FfprobeMediaInspector>;
 
 #[derive(Clone)]
 pub struct AppState {
     pub jobs: JobService<PgJobRepository>,
     pub projects: ProjectService<PgProjectRepository>,
+    pub assets: AppAssetService,
+    pub max_upload_bytes: usize,
     pub enable_dev_routes: bool,
 }

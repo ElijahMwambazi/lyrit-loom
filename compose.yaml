@@ -25,10 +25,17 @@ services:
       DATABASE_URL: postgres://lyrit:lyrit@postgres:5432/lyrit
       API_BIND: 0.0.0.0:8080
       ENABLE_DEV_ROUTES: "true"
+      ARTIFACT_STORE: local
+      ARTIFACT_ROOT: /app/artifacts
+      FFPROBE_PATH: ffprobe
+      MAX_UPLOAD_BYTES: "536870912"
+      MAX_AUDIO_DURATION_MS: "900000"
       LOG_FORMAT: json
       RUST_LOG: lyrit_api=info,tower_http=info
     ports:
       - "8080:8080"
+    volumes:
+      - artifact-data:/app/artifacts
     depends_on:
       postgres:
         condition: service_healthy
@@ -51,6 +58,9 @@ services:
       RUST_LOG: lyrit_worker=info
       LYRIT_TRANSCRIBER_MODE: fake
       PYTHONPATH: /app/apps/transcriber/src
+      ARTIFACT_ROOT: /app/artifacts
+    volumes:
+      - artifact-data:/app/artifacts
     depends_on:
       api:
         condition: service_healthy
@@ -67,3 +77,4 @@ services:
 
 volumes:
   postgres-data:
+  artifact-data:
